@@ -174,33 +174,38 @@ export class Renderer {
     ctx.rect(panX, panY, width * zoom, height * zoom);
     ctx.clip();
 
-    ctx.strokeStyle = this.gridColor;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
+    // Draw two passes: dark then light, visible on any background
+    const passes = [
+      { color: 'rgba(0,0,0,0.4)', offset: 0 },
+      { color: 'rgba(255,255,255,0.4)', offset: 1 },
+    ];
 
-    // Vertical lines
-    if (gx * zoom >= 4) {
-      const startCol = Math.max(0, Math.floor(-panX / (gx * zoom)) * gx);
-      const endCol = Math.min(width, Math.ceil((vw - panX) / (gx * zoom)) * gx);
-      for (let x = startCol; x <= width; x += gx) {
-        const sx = Math.round(x * zoom + panX) + 0.5;
-        ctx.moveTo(sx, Math.max(0, panY));
-        ctx.lineTo(sx, Math.min(vh, panY + height * zoom));
+    for (const pass of passes) {
+      ctx.strokeStyle = pass.color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+
+      if (gx * zoom >= 4) {
+        const startCol = Math.max(0, Math.floor(-panX / (gx * zoom)) * gx);
+        for (let x = startCol; x <= width; x += gx) {
+          const sx = Math.round(x * zoom + panX) + 0.5 + pass.offset;
+          ctx.moveTo(sx, Math.max(0, panY));
+          ctx.lineTo(sx, Math.min(vh, panY + height * zoom));
+        }
       }
+
+      if (gy * zoom >= 4) {
+        const startRow = Math.max(0, Math.floor(-panY / (gy * zoom)) * gy);
+        for (let y = startRow; y <= height; y += gy) {
+          const sy = Math.round(y * zoom + panY) + 0.5 + pass.offset;
+          ctx.moveTo(Math.max(0, panX), sy);
+          ctx.lineTo(Math.min(vw, panX + width * zoom), sy);
+        }
+      }
+
+      ctx.stroke();
     }
 
-    // Horizontal lines
-    if (gy * zoom >= 4) {
-      const startRow = Math.max(0, Math.floor(-panY / (gy * zoom)) * gy);
-      const endRow = Math.min(height, Math.ceil((vh - panY) / (gy * zoom)) * gy);
-      for (let y = startRow; y <= height; y += gy) {
-        const sy = Math.round(y * zoom + panY) + 0.5;
-        ctx.moveTo(Math.max(0, panX), sy);
-        ctx.lineTo(Math.min(vw, panX + width * zoom), sy);
-      }
-    }
-
-    ctx.stroke();
     ctx.restore();
   }
 }

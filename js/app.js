@@ -705,25 +705,22 @@ class App {
     document.getElementById('status-zoom').textContent = Math.round(doc.zoom * 100) + '%';
   }
 
-  /** Export visible layers as a horizontal sprite sheet PNG */
+  /** Export all layers as a horizontal sprite sheet PNG */
   async exportSpriteSheet() {
     const doc = this.doc;
-    if (!doc) return;
-
-    const visibleLayers = doc.layers.filter(l => l.visible);
-    if (visibleLayers.length === 0) return;
+    if (!doc || doc.layers.length === 0) return;
 
     const fw = doc.width;
     const fh = doc.height;
-    const sheetW = fw * visibleLayers.length;
+    const sheetW = fw * doc.layers.length;
 
     const sheet = document.createElement('canvas');
     sheet.width = sheetW;
     sheet.height = fh;
     const ctx = sheet.getContext('2d');
 
-    for (let i = 0; i < visibleLayers.length; i++) {
-      ctx.drawImage(visibleLayers[i].canvas, i * fw, 0);
+    for (let i = 0; i < doc.layers.length; i++) {
+      ctx.drawImage(doc.layers[i].canvas, i * fw, 0);
     }
 
     // Export as PNG blob and save via server or download
