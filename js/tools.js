@@ -127,6 +127,73 @@ export function parseColor(str) {
   return { r, g, b, a };
 }
 
+// ===== Shared Handle Helpers =====
+
+/** Get 8 handle positions around a bounding box {x, y, w, h} in doc coords */
+function getHandles(b) {
+  if (!b) return [];
+  const { x, y, w, h } = b;
+  const mx = x + w / 2, my = y + h / 2;
+  return [
+    { id: 'nw', x: x,     y: y,     cursor: 'nwse-resize' },
+    { id: 'n',  x: mx,    y: y,     cursor: 'ns-resize'   },
+    { id: 'ne', x: x + w, y: y,     cursor: 'nesw-resize' },
+    { id: 'e',  x: x + w, y: my,    cursor: 'ew-resize'   },
+    { id: 'se', x: x + w, y: y + h, cursor: 'nwse-resize' },
+    { id: 's',  x: mx,    y: y + h, cursor: 'ns-resize'   },
+    { id: 'sw', x: x,     y: y + h, cursor: 'nesw-resize' },
+    { id: 'w',  x: x,     y: my,    cursor: 'ew-resize'   },
+  ];
+}
+
+/** Hit-test handles for a given bounding box, returns handle object or null */
+function hitHandle(doc, bounds, mx, my) {
+  if (!bounds) return null;
+  const handles = getHandles(bounds);
+  const z = doc.zoom;
+  const threshold = 6;
+  const smx = mx * z + doc.panX;
+  const smy = my * z + doc.panY;
+  for (const h of handles) {
+    const sx = h.x * z + doc.panX;
+    const sy = h.y * z + doc.panY;
+    if (Math.abs(smx - sx) < threshold && Math.abs(smy - sy) < threshold) {
+      return h;
+    }
+  }
+  return null;
+}
+
+/** Draw 8 resize handles on overlay for a bounding box */
+function drawHandles(ctx, doc, bounds) {
+  if (!bounds) return;
+  const handles = getHandles(bounds);
+  const z = doc.zoom;
+  const size = 5;
+  ctx.fillStyle = 'white';
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 1;
+  for (const h of handles) {
+    const sx = Math.round(h.x * z + doc.panX);
+    const sy = Math.round(h.y * z + doc.panY);
+    ctx.fillRect(sx - size, sy - size, size * 2, size * 2);
+    ctx.strokeRect(sx - size, sy - size, size * 2, size * 2);
+  }
+}
+
+/** Apply handle drag delta to an original bounding box, returns new {x, y, w, h} */
+function applyHandleDrag(handleId, origBounds, dx, dy) {
+  let { x, y, w, h } = origBounds;
+  if (handleId.includes('w')) { x += dx; w -= dx; }
+  if (handleId.includes('e')) { w += dx; }
+  if (handleId.includes('n')) { y += dy; h -= dy; }
+  if (handleId.includes('s')) { h += dy; }
+  // Flip if dragged past opposite edge
+  if (w < 0) { x += w; w = -w; }
+  if (h < 0) { y += h; h = -h; }
+  return { x, y, w: Math.max(1, w), h: Math.max(1, h) };
+}
+
 // ===== Tool Base =====
 
 class Tool {
@@ -760,19 +827,49 @@ export class TextTool extends Tool {
 export class SelectRectTool extends Tool {
   constructor() {
     super('Select', 's');
-    this._drawing = false;
+    this._drawing = false;   // creating a new selection
+    this._resizing = false;  // dragging a handle to resize existing selection
+    this._handle = null;     // which handle is being dragged
   }
 
   onPointerDown(doc, x, y, e) {
+    // Check if clicking on a handle first
+    const handle = doc.selection.active ? hitHandle(doc, doc.selection.bounds, x, y) : null;
+    if (handle) {
+      this._resizing = true;
+      this._handle = handle;
+      // Save original bounds for resize calculation
+      const b = doc.selection.bounds;
+      this._origBounds = { x: b.x, y: b.y, w: b.w, h: b.h };
+      this._dragStartX = x;
+      this._dragStartY = y;
+      return;
+    }
+
+    // Otherwise start a new selection
     this._drawing = true;
     this._startX = x; this._startY = y;
     this._endX = x; this._endY = y;
   }
 
   onPointerMove(doc, x, y, e) {
-    if (!this._drawing) return;
+    if (this._resizing) {
+      const dx = x - this._dragStartX;
+      const dy = y - this._dragStartY;
+      const nb = applyHandleDrag(this._handle.id, this._origBounds, dx, dy);
+      doc.selection.setRect(nb.x, nb.y, nb.w, nb.h);
+      bus.emit('canvas:dirty');
+      return;
+    }
+
+    if (!this._drawing) {
+      // Hover: show resize cursor when over a handle
+      const vp = document.getElementById('viewport');
+      const handle = doc.selection.active ? hitHandle(doc, doc.selection.bounds, x, y) : null;
+      vp.style.cursor = handle ? handle.cursor : 'crosshair';
+      return;
+    }
     this._endX = x; this._endY = y;
-    // Live preview: update selection
     const sx = Math.min(this._startX, this._endX);
     const sy = Math.min(this._startY, this._endY);
     const sw = Math.abs(this._endX - this._startX);
@@ -781,6 +878,13 @@ export class SelectRectTool extends Tool {
   }
 
   onPointerUp(doc, x, y, e) {
+    if (this._resizing) {
+      this._resizing = false;
+      this._handle = null;
+      bus.emit('canvas:dirty');
+      return;
+    }
+
     if (!this._drawing) return;
     this._drawing = false;
     const sx = Math.min(this._startX, this._endX);
@@ -793,6 +897,16 @@ export class SelectRectTool extends Tool {
       doc.selection.setRect(sx, sy, sw, sh);
     }
     bus.emit('canvas:dirty');
+  }
+
+  deactivate() {
+    document.getElementById('viewport').style.cursor = 'crosshair';
+  }
+
+  /** Draw resize handles on the overlay */
+  onOverlay(ctx, doc) {
+    if (!doc.selection.active || !doc.selection.bounds) return;
+    drawHandles(ctx, doc, doc.selection.bounds);
   }
 }
 
@@ -821,14 +935,19 @@ export class MagicWandTool extends Tool {
 export class MoveTool extends Tool {
   constructor() {
     super('Move', 'm');
-    this._moving = false;
+    this._active = false;   // has cut content into buffer
+    this._dragging = false;  // currently dragging (move or handle-scale)
+    this._handleDrag = null; // which handle is being dragged (null = move)
     this._buffer = null;
     this._startX = 0;
     this._startY = 0;
-    this._offsetX = 0;
-    this._offsetY = 0;
-    this._originX = 0;
-    this._originY = 0;
+    // Current destination rect (doc coords)
+    this._destX = 0;
+    this._destY = 0;
+    this._destW = 0;
+    this._destH = 0;
+    // Snapshot of dest rect at drag start (for handle resize)
+    this._dragOrigBounds = null;
   }
 
   activate() {
@@ -837,43 +956,35 @@ export class MoveTool extends Tool {
 
   deactivate() {
     document.getElementById('viewport').style.cursor = 'crosshair';
-    if (this._moving) this._cancel();
+    if (this._active) this._commit();
   }
 
-  _cancel() {
-    this._moving = false;
-    this._buffer = null;
+  /** Get the current bounding box of the moved/scaled content */
+  _getBounds() {
+    return { x: this._destX, y: this._destY, w: this._destW, h: this._destH };
   }
 
-  onPointerDown(doc, x, y, e) {
+  /** Cut content from the layer into the buffer */
+  _cutContent(doc) {
     const layer = doc.activeLayer;
-    if (!layer || !layer.visible) return;
+    if (!layer || !layer.visible) return false;
     doc.saveDrawState();
-    this._moving = true;
-    this._startX = x;
-    this._startY = y;
-    this._offsetX = 0;
-    this._offsetY = 0;
 
     const sel = doc.selection;
     if (sel.active && sel.bounds) {
       const { x: sx, y: sy, w: sw, h: sh } = sel.bounds;
-      this._originX = sx;
-      this._originY = sy;
+      this._destX = sx; this._destY = sy;
+      this._destW = sw; this._destH = sh;
 
-      // Copy selected pixels into buffer
       this._buffer = document.createElement('canvas');
-      this._buffer.width = sw;
-      this._buffer.height = sh;
+      this._buffer.width = sw; this._buffer.height = sh;
       const bctx = this._buffer.getContext('2d');
       bctx.drawImage(layer.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
 
-      // Mask buffer + clear layer within selection
       if (sel.mask) {
         const bufData = bctx.getImageData(0, 0, sw, sh);
         const layerData = layer.ctx.getImageData(sx, sy, sw, sh);
-        const bd = bufData.data;
-        const ld = layerData.data;
+        const bd = bufData.data, ld = layerData.data;
         for (let row = 0; row < sh; row++) {
           for (let col = 0; col < sw; col++) {
             const pi = (row * sw + col) * 4;
@@ -890,65 +1001,155 @@ export class MoveTool extends Tool {
         layer.ctx.clearRect(sx, sy, sw, sh);
       }
     } else {
-      // Move entire layer
-      this._originX = 0;
-      this._originY = 0;
+      this._destX = 0; this._destY = 0;
+      this._destW = doc.width; this._destH = doc.height;
       this._buffer = document.createElement('canvas');
-      this._buffer.width = doc.width;
-      this._buffer.height = doc.height;
+      this._buffer.width = doc.width; this._buffer.height = doc.height;
       this._buffer.getContext('2d').drawImage(layer.canvas, 0, 0);
       layer.clear();
     }
+    this._active = true;
     bus.emit('canvas:dirty');
+    return true;
   }
 
-  onPointerMove(doc, x, y, e) {
-    if (!this._moving) return;
-    this._offsetX = x - this._startX;
-    this._offsetY = y - this._startY;
-    // Shift: snap to cardinal direction
-    if (e.shiftKey) {
-      if (Math.abs(this._offsetX) >= Math.abs(this._offsetY)) {
-        this._offsetY = 0;
-      } else {
-        this._offsetX = 0;
-      }
-    }
-    bus.emit('canvas:dirty');
-  }
-
-  onPointerUp(doc) {
-    if (!this._moving || !this._buffer) return;
-    this._moving = false;
-
+  /** Commit the buffer back to the layer */
+  _commit() {
+    if (!this._active || !this._buffer) return;
+    const doc = bus._app?.doc;
+    if (!doc) return;
     const layer = doc.activeLayer;
-    const dx = Math.round(this._originX + this._offsetX);
-    const dy = Math.round(this._originY + this._offsetY);
-    layer.ctx.drawImage(this._buffer, dx, dy);
+    const dx = Math.round(this._destX);
+    const dy = Math.round(this._destY);
+    const dw = Math.max(1, Math.round(this._destW));
+    const dh = Math.max(1, Math.round(this._destH));
 
-    // Move selection to match
+    const interp = bus._interpolation || 'nearest';
+    layer.ctx.imageSmoothingEnabled = interp !== 'nearest';
+    if (interp === 'bicubic') layer.ctx.imageSmoothingQuality = 'high';
+    else layer.ctx.imageSmoothingQuality = 'low';
+    layer.ctx.drawImage(this._buffer, dx, dy, dw, dh);
+    layer.ctx.imageSmoothingEnabled = false;
+
+    // Update selection to match
     if (doc.selection.active && doc.selection.bounds) {
-      const b = doc.selection.bounds;
-      doc.selection.setRect(
-        b.x + Math.round(this._offsetX),
-        b.y + Math.round(this._offsetY),
-        b.w, b.h
-      );
+      doc.selection.setRect(dx, dy, dw, dh);
     }
 
     this._buffer = null;
+    this._active = false;
+    bus.emit('canvas:dirty');
+  }
+
+  onPointerDown(doc, x, y, e) {
+    // If we already have content in the buffer, check for handle or interior click
+    if (this._active && this._buffer) {
+      const bounds = this._getBounds();
+      const handle = hitHandle(doc, bounds, x, y);
+      if (handle) {
+        // Start handle-based scale
+        this._dragging = true;
+        this._handleDrag = handle;
+        this._startX = x; this._startY = y;
+        this._dragOrigBounds = { ...bounds };
+        return;
+      }
+      // Check if clicking inside the bounds (move)
+      if (x >= bounds.x && x <= bounds.x + bounds.w &&
+          y >= bounds.y && y <= bounds.y + bounds.h) {
+        this._dragging = true;
+        this._handleDrag = null;
+        this._startX = x; this._startY = y;
+        this._dragOrigBounds = { ...bounds };
+        return;
+      }
+      // Clicked outside: commit current transform, then start fresh
+      this._commit();
+    }
+
+    // Cut content and start move
+    if (this._cutContent(doc)) {
+      this._dragging = true;
+      this._handleDrag = null;
+      this._startX = x; this._startY = y;
+      this._dragOrigBounds = { ...this._getBounds() };
+    }
+  }
+
+  onPointerMove(doc, x, y, e) {
+    if (!this._dragging) {
+      // Hover cursor
+      if (this._active) {
+        const handle = hitHandle(doc, this._getBounds(), x, y);
+        if (handle) {
+          document.getElementById('viewport').style.cursor = handle.cursor;
+          return;
+        }
+        const b = this._getBounds();
+        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+          document.getElementById('viewport').style.cursor = 'move';
+          return;
+        }
+      }
+      document.getElementById('viewport').style.cursor = 'move';
+      return;
+    }
+
+    const dx = x - this._startX;
+    const dy = y - this._startY;
+
+    if (this._handleDrag) {
+      // Handle-based scale
+      const nb = applyHandleDrag(this._handleDrag.id, this._dragOrigBounds, dx, dy);
+      this._destX = nb.x; this._destY = nb.y;
+      this._destW = nb.w; this._destH = nb.h;
+    } else {
+      // Move
+      let ox = dx, oy = dy;
+      if (e.shiftKey) {
+        if (Math.abs(ox) >= Math.abs(oy)) oy = 0;
+        else ox = 0;
+      }
+      this._destX = this._dragOrigBounds.x + ox;
+      this._destY = this._dragOrigBounds.y + oy;
+    }
+    bus.emit('canvas:dirty');
+  }
+
+  onPointerUp(doc, x, y, e) {
+    if (!this._dragging) return;
+    this._dragging = false;
+    this._handleDrag = null;
+    // Don't commit yet — keep handles visible for further adjustments
     bus.emit('canvas:dirty');
   }
 
   onOverlay(ctx, doc) {
-    if (!this._moving || !this._buffer) return;
+    if (!this._active || !this._buffer) return;
     const z = doc.zoom;
-    const dx = Math.round(this._originX + this._offsetX) * z + doc.panX;
-    const dy = Math.round(this._originY + this._offsetY) * z + doc.panY;
-    ctx.imageSmoothingEnabled = false;
+    const dx = Math.round(this._destX) * z + doc.panX;
+    const dy = Math.round(this._destY) * z + doc.panY;
+    const dw = Math.max(1, Math.round(this._destW)) * z;
+    const dh = Math.max(1, Math.round(this._destH)) * z;
+
+    const interp = bus._interpolation || 'nearest';
+    ctx.imageSmoothingEnabled = interp !== 'nearest';
+    if (interp === 'bicubic') ctx.imageSmoothingQuality = 'high';
+    else ctx.imageSmoothingQuality = 'low';
     ctx.globalAlpha = 0.7;
-    ctx.drawImage(this._buffer, dx, dy, this._buffer.width * z, this._buffer.height * z);
+    ctx.drawImage(this._buffer, dx, dy, dw, dh);
+    ctx.imageSmoothingEnabled = false;
     ctx.globalAlpha = 1;
+
+    // Bounding box outline
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(dx + 0.5, dy + 0.5, dw, dh);
+    ctx.setLineDash([]);
+
+    // Handles
+    drawHandles(ctx, doc, this._getBounds());
   }
 }
 
@@ -1118,16 +1319,18 @@ export class RotateTool extends Tool {
 export class ScaleTool extends Tool {
   constructor() {
     super('Scale', '');
-    this._scaling = false;
+    this._active = false;    // has cut content into buffer
+    this._dragging = false;  // currently dragging a handle
+    this._handleDrag = null; // which handle is being dragged
     this._buffer = null;
     this._startX = 0;
     this._startY = 0;
-    this._originX = 0;
-    this._originY = 0;
-    this._bufW = 0;
-    this._bufH = 0;
-    this._scaleX = 1;
-    this._scaleY = 1;
+    // Current destination rect (doc coords)
+    this._destX = 0;
+    this._destY = 0;
+    this._destW = 0;
+    this._destH = 0;
+    this._dragOrigBounds = null;
   }
 
   activate() {
@@ -1136,43 +1339,34 @@ export class ScaleTool extends Tool {
 
   deactivate() {
     document.getElementById('viewport').style.cursor = 'crosshair';
-    if (this._scaling) this._cancel();
+    if (this._active) this._commit();
   }
 
-  _cancel() {
-    this._scaling = false;
-    this._buffer = null;
+  _getBounds() {
+    return { x: this._destX, y: this._destY, w: this._destW, h: this._destH };
   }
 
-  onPointerDown(doc, x, y, e) {
+  /** Cut content from the layer into the buffer */
+  _cutContent(doc) {
     const layer = doc.activeLayer;
-    if (!layer || !layer.visible) return;
+    if (!layer || !layer.visible) return false;
     doc.saveDrawState();
-    this._scaling = true;
-    this._startX = x;
-    this._startY = y;
-    this._scaleX = 1;
-    this._scaleY = 1;
 
     const sel = doc.selection;
     if (sel.active && sel.bounds) {
       const { x: sx, y: sy, w: sw, h: sh } = sel.bounds;
-      this._originX = sx;
-      this._originY = sy;
-      this._bufW = sw;
-      this._bufH = sh;
+      this._destX = sx; this._destY = sy;
+      this._destW = sw; this._destH = sh;
 
       this._buffer = document.createElement('canvas');
-      this._buffer.width = sw;
-      this._buffer.height = sh;
+      this._buffer.width = sw; this._buffer.height = sh;
       const bctx = this._buffer.getContext('2d');
       bctx.drawImage(layer.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
 
       if (sel.mask) {
         const bufData = bctx.getImageData(0, 0, sw, sh);
         const layerData = layer.ctx.getImageData(sx, sy, sw, sh);
-        const bd = bufData.data;
-        const ld = layerData.data;
+        const bd = bufData.data, ld = layerData.data;
         for (let row = 0; row < sh; row++) {
           for (let col = 0; col < sw; col++) {
             const pi = (row * sw + col) * 4;
@@ -1189,83 +1383,151 @@ export class ScaleTool extends Tool {
         layer.ctx.clearRect(sx, sy, sw, sh);
       }
     } else {
-      this._originX = 0;
-      this._originY = 0;
-      this._bufW = doc.width;
-      this._bufH = doc.height;
-
+      this._destX = 0; this._destY = 0;
+      this._destW = doc.width; this._destH = doc.height;
       this._buffer = document.createElement('canvas');
-      this._buffer.width = doc.width;
-      this._buffer.height = doc.height;
+      this._buffer.width = doc.width; this._buffer.height = doc.height;
       this._buffer.getContext('2d').drawImage(layer.canvas, 0, 0);
       layer.clear();
     }
+    this._active = true;
     bus.emit('canvas:dirty');
+    return true;
   }
 
-  onPointerMove(doc, x, y, e) {
-    if (!this._scaling) return;
-    const dx = x - this._startX;
-    const dy = y - this._startY;
-    this._scaleX = Math.max(0.01, (this._bufW + dx) / this._bufW);
-    this._scaleY = Math.max(0.01, (this._bufH + dy) / this._bufH);
-    if (e.shiftKey) {
-      const s = Math.max(this._scaleX, this._scaleY);
-      this._scaleX = s;
-      this._scaleY = s;
-    }
-    bus.emit('canvas:dirty');
-  }
-
-  onPointerUp(doc) {
-    if (!this._scaling || !this._buffer) return;
-    this._scaling = false;
-
+  /** Commit the buffer back to the layer */
+  _commit() {
+    if (!this._active || !this._buffer) return;
+    const doc = bus._app?.doc;
+    if (!doc) return;
     const layer = doc.activeLayer;
-    const ctx = layer.ctx;
-    const newW = Math.max(1, Math.round(this._bufW * this._scaleX));
-    const newH = Math.max(1, Math.round(this._bufH * this._scaleY));
+    const dx = Math.round(this._destX);
+    const dy = Math.round(this._destY);
+    const dw = Math.max(1, Math.round(this._destW));
+    const dh = Math.max(1, Math.round(this._destH));
 
     const interp = bus._interpolation || 'nearest';
-    ctx.imageSmoothingEnabled = interp !== 'nearest';
-    if (interp === 'bicubic') ctx.imageSmoothingQuality = 'high';
-    else ctx.imageSmoothingQuality = 'low';
-
-    ctx.drawImage(this._buffer, this._originX, this._originY, newW, newH);
-    ctx.imageSmoothingEnabled = false;
+    layer.ctx.imageSmoothingEnabled = interp !== 'nearest';
+    if (interp === 'bicubic') layer.ctx.imageSmoothingQuality = 'high';
+    else layer.ctx.imageSmoothingQuality = 'low';
+    layer.ctx.drawImage(this._buffer, dx, dy, dw, dh);
+    layer.ctx.imageSmoothingEnabled = false;
 
     if (doc.selection.active && doc.selection.bounds) {
-      doc.selection.setRect(this._originX, this._originY, newW, newH);
+      doc.selection.setRect(dx, dy, dw, dh);
     }
 
     this._buffer = null;
+    this._active = false;
+    bus.emit('canvas:dirty');
+  }
+
+  onPointerDown(doc, x, y, e) {
+    // If we already have content in the buffer, check for handle click
+    if (this._active && this._buffer) {
+      const bounds = this._getBounds();
+      const handle = hitHandle(doc, bounds, x, y);
+      if (handle) {
+        this._dragging = true;
+        this._handleDrag = handle;
+        this._startX = x; this._startY = y;
+        this._dragOrigBounds = { ...bounds };
+        return;
+      }
+      // Clicked outside handles: commit current transform, then start fresh
+      this._commit();
+    }
+
+    // Cut content and start with default SE handle drag
+    if (this._cutContent(doc)) {
+      this._dragging = true;
+      // Default: drag from SE corner
+      this._handleDrag = { id: 'se', cursor: 'nwse-resize' };
+      this._startX = x; this._startY = y;
+      this._dragOrigBounds = { ...this._getBounds() };
+    }
+  }
+
+  onPointerMove(doc, x, y, e) {
+    if (!this._dragging) {
+      // Hover cursor
+      if (this._active) {
+        const handle = hitHandle(doc, this._getBounds(), x, y);
+        document.getElementById('viewport').style.cursor = handle ? handle.cursor : 'nwse-resize';
+      }
+      return;
+    }
+
+    const dx = x - this._startX;
+    const dy = y - this._startY;
+    let nb = applyHandleDrag(this._handleDrag.id, this._dragOrigBounds, dx, dy);
+
+    // Shift: constrain proportions
+    if (e.shiftKey && this._dragOrigBounds.w > 0 && this._dragOrigBounds.h > 0) {
+      const aspect = this._dragOrigBounds.w / this._dragOrigBounds.h;
+      const hid = this._handleDrag.id;
+      if (hid === 'n' || hid === 's') {
+        nb.w = nb.h * aspect;
+      } else if (hid === 'e' || hid === 'w') {
+        nb.h = nb.w / aspect;
+      } else {
+        // Corner: use the larger scale factor
+        const sx = nb.w / this._dragOrigBounds.w;
+        const sy = nb.h / this._dragOrigBounds.h;
+        const s = Math.max(sx, sy);
+        nb.w = this._dragOrigBounds.w * s;
+        nb.h = this._dragOrigBounds.h * s;
+      }
+    }
+
+    this._destX = nb.x; this._destY = nb.y;
+    this._destW = nb.w; this._destH = nb.h;
+    bus.emit('canvas:dirty');
+  }
+
+  onPointerUp(doc, x, y, e) {
+    if (!this._dragging) return;
+    this._dragging = false;
+    this._handleDrag = null;
+    // Don't commit yet — keep handles visible for further adjustments
     bus.emit('canvas:dirty');
   }
 
   onOverlay(ctx, doc) {
-    if (!this._scaling || !this._buffer) return;
+    if (!this._active || !this._buffer) return;
     const z = doc.zoom;
-    const newW = Math.max(1, Math.round(this._bufW * this._scaleX));
-    const newH = Math.max(1, Math.round(this._bufH * this._scaleY));
-    const dx = this._originX * z + doc.panX;
-    const dy = this._originY * z + doc.panY;
+    const dx = Math.round(this._destX) * z + doc.panX;
+    const dy = Math.round(this._destY) * z + doc.panY;
+    const dw = Math.max(1, Math.round(this._destW)) * z;
+    const dh = Math.max(1, Math.round(this._destH)) * z;
 
     const interp = bus._interpolation || 'nearest';
     ctx.imageSmoothingEnabled = interp !== 'nearest';
     if (interp === 'bicubic') ctx.imageSmoothingQuality = 'high';
     else ctx.imageSmoothingQuality = 'low';
-
     ctx.globalAlpha = 0.7;
-    ctx.drawImage(this._buffer, dx, dy, newW * z, newH * z);
+    ctx.drawImage(this._buffer, dx, dy, dw, dh);
     ctx.imageSmoothingEnabled = false;
     ctx.globalAlpha = 1;
 
+    // Bounding box outline
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(dx + 0.5, dy + 0.5, dw, dh);
+    ctx.setLineDash([]);
+
+    // Handles
+    drawHandles(ctx, doc, this._getBounds());
+
     // Size readout
+    const nw = Math.max(1, Math.round(this._destW));
+    const nh = Math.max(1, Math.round(this._destH));
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(dx + newW * z + 4, dy - 2, 80, 18);
+    ctx.fillRect(dx + dw + 4, dy - 2, 80, 18);
     ctx.fillStyle = 'white';
     ctx.font = '11px sans-serif';
-    ctx.fillText(`${newW} x ${newH}`, dx + newW * z + 8, dy + 11);
+    ctx.fillText(`${nw} x ${nh}`, dx + dw + 8, dy + 11);
   }
 }
 

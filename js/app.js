@@ -7,6 +7,9 @@ import { ColorSystem, LayersPanel, DocManager, ToolOptionsBar, MenuBar, NewImage
 
 class App {
   constructor() {
+    // Make app accessible to tools for commit-on-deactivate
+    bus._app = this;
+
     // Mouse state for tool overlays
     bus._mouseX = 0;
     bus._mouseY = 0;
@@ -51,9 +54,54 @@ class App {
   _initCanvasEvents() {
     const vp = document.getElementById('viewport');
     const mainCanvas = document.getElementById('canvas-main');
-    let panning = false;
-    let panStartX = 0, panStartY = 0;
     let spaceHeld = false;
+
+    // Exclusive pan (space+click): blocks tool events entirely
+    let spacePanning = false;
+    let spacePanStartX = 0, spacePanStartY = 0;
+    let spacePanPointerId = null;
+
+    // Concurrent middle-click pan: runs alongside tool events
+    let middlePanning = false;
+    let middlePanStartX = 0, middlePanStartY = 0;
+    let middlePanPointerId = null;
+
+    // Tool drag state for auto-pan
+    let toolDragging = false;
+    let toolPointerId = null;
+    let lastClientX = 0, lastClientY = 0;
+    let autoPanTimer = null;
+    const AUTO_PAN_EDGE = 30; // pixels from edge to start auto-pan
+    const AUTO_PAN_SPEED = 8; // pixels per frame
+
+    const stopAutoPan = () => {
+      if (autoPanTimer) { cancelAnimationFrame(autoPanTimer); autoPanTimer = null; }
+    };
+
+    const tickAutoPan = () => {
+      autoPanTimer = null;
+      const doc = this.doc;
+      if (!doc || !toolDragging) return;
+      const rect = vp.getBoundingClientRect();
+      const cx = lastClientX - rect.left;
+      const cy = lastClientY - rect.top;
+      let dx = 0, dy = 0;
+      if (cx < AUTO_PAN_EDGE) dx = AUTO_PAN_SPEED;
+      else if (cx > rect.width - AUTO_PAN_EDGE) dx = -AUTO_PAN_SPEED;
+      if (cy < AUTO_PAN_EDGE) dy = AUTO_PAN_SPEED;
+      else if (cy > rect.height - AUTO_PAN_EDGE) dy = -AUTO_PAN_SPEED;
+      if (dx || dy) {
+        doc.panX += dx;
+        doc.panY += dy;
+        // Re-dispatch tool move with updated coords
+        const { x, y } = doc.screenToDoc(cx, cy);
+        document.getElementById('status-coords').textContent =
+          `${Math.floor(x)}, ${Math.floor(y)}`;
+        this.toolManager.activeTool?.onPointerMove(doc, x, y, { button: 0 });
+        bus.emit('canvas:dirty');
+        autoPanTimer = requestAnimationFrame(tickAutoPan);
+      }
+    };
 
     // Track space key for pan mode
     document.addEventListener('keydown', e => {
@@ -65,7 +113,7 @@ class App {
     document.addEventListener('keyup', e => {
       if (e.code === 'Space') {
         spaceHeld = false;
-        if (!panning) vp.style.cursor = 'crosshair';
+        if (!spacePanning) vp.style.cursor = 'crosshair';
       }
     });
 
@@ -73,20 +121,38 @@ class App {
       const doc = this.doc;
       if (!doc) return;
 
-      // Middle click or space+click = pan
-      if (e.button === 1 || (spaceHeld && e.button === 0)) {
-        panning = true;
-        panStartX = e.clientX - doc.panX;
-        panStartY = e.clientY - doc.panY;
+      // Space+left-click = exclusive pan (blocks tool)
+      if (spaceHeld && e.button === 0) {
+        spacePanning = true;
+        spacePanStartX = e.clientX - doc.panX;
+        spacePanStartY = e.clientY - doc.panY;
+        spacePanPointerId = e.pointerId;
         vp.style.cursor = 'grabbing';
         mainCanvas.setPointerCapture(e.pointerId);
         return;
       }
 
-      const rect = vp.getBoundingClientRect();
-      const { x, y } = doc.screenToDoc(e.clientX - rect.left, e.clientY - rect.top);
-      this.toolManager.activeTool?.onPointerDown(doc, x, y, e);
-      mainCanvas.setPointerCapture(e.pointerId);
+      // Middle-click = concurrent pan (doesn't block tool)
+      if (e.button === 1) {
+        middlePanning = true;
+        middlePanStartX = e.clientX - doc.panX;
+        middlePanStartY = e.clientY - doc.panY;
+        middlePanPointerId = e.pointerId;
+        mainCanvas.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      // Left-click = tool
+      if (e.button === 0 || e.button === 2) {
+        const rect = vp.getBoundingClientRect();
+        const { x, y } = doc.screenToDoc(e.clientX - rect.left, e.clientY - rect.top);
+        this.toolManager.activeTool?.onPointerDown(doc, x, y, e);
+        toolDragging = true;
+        toolPointerId = e.pointerId;
+        lastClientX = e.clientX;
+        lastClientY = e.clientY;
+        mainCanvas.setPointerCapture(e.pointerId);
+      }
     });
 
     mainCanvas.addEventListener('pointermove', e => {
@@ -96,39 +162,88 @@ class App {
       bus._mouseX = e.clientX;
       bus._mouseY = e.clientY;
 
-      if (panning) {
-        doc.panX = e.clientX - panStartX;
-        doc.panY = e.clientY - panStartY;
+      // Space pan
+      if (spacePanning && e.pointerId === spacePanPointerId) {
+        doc.panX = e.clientX - spacePanStartX;
+        doc.panY = e.clientY - spacePanStartY;
         bus.emit('canvas:dirty');
         return;
       }
 
-      const rect = vp.getBoundingClientRect();
-      const { x, y } = doc.screenToDoc(e.clientX - rect.left, e.clientY - rect.top);
+      // Middle-click pan (concurrent — runs alongside tool)
+      if (middlePanning && e.pointerId === middlePanPointerId) {
+        doc.panX = e.clientX - middlePanStartX;
+        doc.panY = e.clientY - middlePanStartY;
+        bus.emit('canvas:dirty');
+        // Also update tool position since viewport shifted under cursor
+        if (toolDragging) {
+          const rect = vp.getBoundingClientRect();
+          const cx = lastClientX - rect.left;
+          const cy = lastClientY - rect.top;
+          const { x, y } = doc.screenToDoc(cx, cy);
+          this.toolManager.activeTool?.onPointerMove(doc, x, y, { button: 0 });
+        }
+        return;
+      }
 
-      // Status bar coords
-      document.getElementById('status-coords').textContent =
-        `${Math.floor(x)}, ${Math.floor(y)}`;
+      // Tool move
+      if (e.pointerId === toolPointerId || !toolDragging) {
+        const rect = vp.getBoundingClientRect();
+        const { x, y } = doc.screenToDoc(e.clientX - rect.left, e.clientY - rect.top);
 
-      this.toolManager.activeTool?.onPointerMove(doc, x, y, e);
+        document.getElementById('status-coords').textContent =
+          `${Math.floor(x)}, ${Math.floor(y)}`;
+
+        this.toolManager.activeTool?.onPointerMove(doc, x, y, e);
+
+        // Auto-pan: track mouse position for edge detection
+        if (toolDragging) {
+          lastClientX = e.clientX;
+          lastClientY = e.clientY;
+          const cx = e.clientX - rect.left;
+          const cy = e.clientY - rect.top;
+          const nearEdge = cx < AUTO_PAN_EDGE || cx > rect.width - AUTO_PAN_EDGE ||
+                           cy < AUTO_PAN_EDGE || cy > rect.height - AUTO_PAN_EDGE;
+          if (nearEdge && !autoPanTimer) {
+            autoPanTimer = requestAnimationFrame(tickAutoPan);
+          } else if (!nearEdge) {
+            stopAutoPan();
+          }
+        }
+      }
     });
 
     mainCanvas.addEventListener('pointerup', e => {
       const doc = this.doc;
       if (!doc) return;
 
-      if (panning) {
-        panning = false;
+      // Space pan end
+      if (spacePanning && e.pointerId === spacePanPointerId) {
+        spacePanning = false;
+        spacePanPointerId = null;
         vp.style.cursor = spaceHeld ? 'grab' : 'crosshair';
         return;
       }
 
-      const rect = vp.getBoundingClientRect();
-      const { x, y } = doc.screenToDoc(e.clientX - rect.left, e.clientY - rect.top);
-      this.toolManager.activeTool?.onPointerUp(doc, x, y, e);
+      // Middle-click pan end
+      if (middlePanning && e.pointerId === middlePanPointerId) {
+        middlePanning = false;
+        middlePanPointerId = null;
+        // Don't return — tool up may also need to fire
+      }
+
+      // Tool up
+      if (toolDragging && e.pointerId === toolPointerId) {
+        toolDragging = false;
+        toolPointerId = null;
+        stopAutoPan();
+        const rect = vp.getBoundingClientRect();
+        const { x, y } = doc.screenToDoc(e.clientX - rect.left, e.clientY - rect.top);
+        this.toolManager.activeTool?.onPointerUp(doc, x, y, e);
+      }
     });
 
-    // Zoom with wheel
+    // Wheel: zoom (pinch or scroll-wheel) and pan (two-finger trackpad scroll)
     mainCanvas.addEventListener('wheel', e => {
       e.preventDefault();
       const doc = this.doc;
@@ -138,16 +253,36 @@ class App {
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
 
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      const newZoom = Math.max(0.05, Math.min(32, doc.zoom * factor));
-
-      // Zoom toward mouse position
-      doc.panX = mx - (mx - doc.panX) * (newZoom / doc.zoom);
-      doc.panY = my - (my - doc.panY) * (newZoom / doc.zoom);
-      doc.zoom = newZoom;
-
-      document.getElementById('status-zoom').textContent = Math.round(doc.zoom * 100) + '%';
-      bus.emit('canvas:dirty');
+      if (e.ctrlKey) {
+        // Pinch-to-zoom (trackpad) — smooth continuous zoom
+        const factor = Math.exp(-e.deltaY * 0.01);
+        const newZoom = Math.max(0.05, Math.min(32, doc.zoom * factor));
+        doc.panX = mx - (mx - doc.panX) * (newZoom / doc.zoom);
+        doc.panY = my - (my - doc.panY) * (newZoom / doc.zoom);
+        doc.zoom = newZoom;
+        document.getElementById('status-zoom').textContent = Math.round(doc.zoom * 100) + '%';
+        bus.emit('canvas:dirty');
+      } else if (e.deltaMode === 0 && (Math.abs(e.deltaX) > 0 || Math.abs(e.deltaY) > 0)) {
+        // Two-finger trackpad scroll or mouse wheel
+        // Trackpad scroll events have deltaMode 0 and often have deltaX
+        // Mouse wheel: deltaX is 0, deltaY is large discrete steps
+        const isTrackpadPan = Math.abs(e.deltaX) > 0 || Math.abs(e.deltaY) < 40;
+        if (isTrackpadPan) {
+          // Pan with two-finger scroll
+          doc.panX -= e.deltaX;
+          doc.panY -= e.deltaY;
+          bus.emit('canvas:dirty');
+        } else {
+          // Mouse scroll wheel — stepped zoom
+          const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+          const newZoom = Math.max(0.05, Math.min(32, doc.zoom * factor));
+          doc.panX = mx - (mx - doc.panX) * (newZoom / doc.zoom);
+          doc.panY = my - (my - doc.panY) * (newZoom / doc.zoom);
+          doc.zoom = newZoom;
+          document.getElementById('status-zoom').textContent = Math.round(doc.zoom * 100) + '%';
+          bus.emit('canvas:dirty');
+        }
+      }
     }, { passive: false });
   }
 
@@ -187,6 +322,8 @@ class App {
             if (shift) this.redo();
             else this.undo();
             return;
+          case 'c': e.preventDefault(); this.copySelection(); return;
+          case 'x': e.preventDefault(); this.cutSelection(); return;
           case 'v': return; // let native paste event handle it
           case 'a': e.preventDefault(); this.selectAll(); return;
           case 'd': e.preventDefault(); this.deselect(); return;
@@ -307,8 +444,17 @@ class App {
       bus._lastClipboardSize = { width: img.width, height: img.height };
       const doc = this.doc;
       if (doc) {
+        // Expand canvas if image is larger (top-left anchor)
+        const needW = Math.max(doc.width, img.width);
+        const needH = Math.max(doc.height, img.height);
+        if (needW > doc.width || needH > doc.height) {
+          doc.saveStructureState();
+          doc.resizeCanvas(needW, needH, 0, 0);
+          document.getElementById('status-size').textContent = `${doc.width} x ${doc.height}`;
+        } else {
+          doc.saveStructureState();
+        }
         // Paste as new layer in current document
-        doc.saveStructureState();
         const layer = doc.addLayer('Pasted');
         layer.ctx.drawImage(img, 0, 0);
         bus.emit('layers:changed');
@@ -365,6 +511,14 @@ class App {
 
   undo() {
     if (!this.doc) return;
+    // Cancel any active transform tool (move/scale) so its floating buffer
+    // doesn't get committed on top of the restored state
+    const tool = this.toolManager.activeTool;
+    if (tool && tool._active && tool._buffer) {
+      tool._active = false;
+      tool._dragging = false;
+      tool._buffer = null;
+    }
     if (this.doc.undo()) {
       bus.emit('canvas:dirty');
       bus.emit('layers:changed');
@@ -373,6 +527,12 @@ class App {
 
   redo() {
     if (!this.doc) return;
+    const tool = this.toolManager.activeTool;
+    if (tool && tool._active && tool._buffer) {
+      tool._active = false;
+      tool._dragging = false;
+      tool._buffer = null;
+    }
     if (this.doc.redo()) {
       bus.emit('canvas:dirty');
       bus.emit('layers:changed');
@@ -389,6 +549,61 @@ class App {
     if (!this.doc) return;
     this.doc.selection.clear();
     bus.emit('canvas:dirty');
+  }
+
+  /** Copy selected region to clipboard as PNG */
+  copySelection() {
+    const doc = this.doc;
+    if (!doc) return;
+    const layer = doc.activeLayer;
+    if (!layer) return;
+
+    let sx = 0, sy = 0, sw = doc.width, sh = doc.height;
+    const sel = doc.selection;
+    if (sel.active && sel.bounds) {
+      sx = sel.bounds.x; sy = sel.bounds.y;
+      sw = sel.bounds.w; sh = sel.bounds.h;
+    }
+
+    // Render selected pixels to a temp canvas
+    const tmp = document.createElement('canvas');
+    tmp.width = sw; tmp.height = sh;
+    const tctx = tmp.getContext('2d');
+    tctx.drawImage(layer.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+
+    // Mask out unselected pixels for non-rectangular selections
+    if (sel.active && sel.mask) {
+      const id = tctx.getImageData(0, 0, sw, sh);
+      const d = id.data;
+      for (let row = 0; row < sh; row++) {
+        for (let col = 0; col < sw; col++) {
+          if (!sel.isSelected(col + sx, row + sy)) {
+            const pi = (row * sw + col) * 4;
+            d[pi] = 0; d[pi+1] = 0; d[pi+2] = 0; d[pi+3] = 0;
+          }
+        }
+      }
+      tctx.putImageData(id, 0, 0);
+    }
+
+    tmp.toBlob(blob => {
+      if (!blob) return;
+      try {
+        navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': blob })
+        ]);
+      } catch (err) {
+        // Clipboard API may not be available
+      }
+    }, 'image/png');
+
+    bus._lastClipboardSize = { width: sw, height: sh };
+  }
+
+  /** Cut selected region: copy to clipboard then delete */
+  cutSelection() {
+    this.copySelection();
+    this._deleteSelection();
   }
 
   _deleteSelection() {

@@ -786,6 +786,8 @@ export class MenuBar {
         { label: 'Undo', shortcut: 'Ctrl+Z', action: () => app.undo() },
         { label: 'Redo', shortcut: 'Ctrl+Shift+Z', action: () => app.redo() },
         { sep: true },
+        { label: 'Cut', shortcut: 'Ctrl+X', action: () => app.cutSelection() },
+        { label: 'Copy', shortcut: 'Ctrl+C', action: () => app.copySelection() },
         { label: 'Paste', shortcut: 'Ctrl+V', action: () => app.pasteFromClipboard() },
         { sep: true },
         { label: 'Select All', shortcut: 'Ctrl+A', action: () => app.selectAll() },
