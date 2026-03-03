@@ -41,6 +41,23 @@ function rgbToHex(r, g, b) {
   return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
 }
 
+// ===== Palette Data =====
+
+const PALETTES = {
+  lospec500: [
+    '#10121c','#2c1e31','#6b2643','#ac2847','#ec273f','#94493a','#de5d3a','#e98537',
+    '#f3a833','#4d3533','#6e4c30','#a26d3f','#ce9248','#dab163','#e8d282','#f7f3b7',
+    '#1e4044','#006554','#26854c','#5ab552','#9de64e','#008b8b','#62a477','#a6cb96',
+    '#d3eed3','#3e3b65','#3859b3','#3388de','#36c5f4','#6dead6','#5e5b8c','#8c78a5',
+    '#b0a7b8','#deceed','#9a4d76','#c878af','#cc99ff','#fa6e79','#ffa2ac','#ffd1d5',
+    '#f6e8e0','#ffffff',
+  ],
+  pico8: [
+    '#000000','#1d2b53','#7e2553','#008751','#ab5236','#5f574f','#c2c3c7','#fff1e8',
+    '#ff004d','#ffa300','#ffec27','#00e436','#29adff','#83769c','#ff77a8','#ffccaa',
+  ],
+};
+
 // ===== Color System =====
 
 export class ColorSystem {
@@ -132,16 +149,22 @@ export class ColorSystem {
   }
 
   _initPalette() {
+    this._loadPalette('lospec500');
+
+    const select = document.getElementById('palette-select');
+    select.addEventListener('change', () => {
+      this._loadPalette(select.value);
+    });
+  }
+
+  _loadPalette(name) {
     const palette = document.getElementById('palette');
-    const colors = [
-      '#000000','#404040','#808080','#c0c0c0','#ffffff','#800000','#ff0000','#ff8000',
-      '#ffff00','#80ff00','#00ff00','#00ff80','#00ffff','#0080ff','#0000ff','#8000ff',
-      '#ff00ff','#ff0080','#800080','#000080','#008080','#008000','#808000','#804000',
-      '#401000','#ffc0cb','#ffa07a','#ffd700','#98fb98','#87ceeb','#dda0dd','#f0e68c',
-      '#b0c4de','#d2b48c','#ffe4c4','#f5f5dc','#e6e6fa','#faebd7','#fffaf0','#f0fff0',
-      '#f5fffa','#f0ffff','#fff0f5','#ffe4e1','#fff5ee','#fdf5e6','#fffacd','#fafad2',
-      '#ffffe0','#f0f8ff',
-    ];
+    palette.innerHTML = '';
+    const colors = PALETTES[name] || PALETTES.lospec500;
+
+    // Adjust grid columns: 8 for large palettes, 4 for small ones like pico-8
+    palette.style.gridTemplateColumns = `repeat(${colors.length <= 16 ? 4 : 8}, 1fr)`;
+
     for (const c of colors) {
       const el = document.createElement('div');
       el.className = 'palette-color';
@@ -781,6 +804,9 @@ export class MenuBar {
         { label: 'Open Project (.gbp)', action: () => app.openProject() },
         { sep: true },
         { label: 'Close', shortcut: 'Ctrl+W', action: () => bus.emit('doc:close') },
+        { sep: true },
+        { label: 'Split Sprite Sheet → Layers', action: () => app.splitSpriteSheet() },
+        { label: 'Export Layers → Sprite Sheet', action: () => app.exportSpriteSheet() },
       ];
       case 'edit': return [
         { label: 'Undo', shortcut: 'Ctrl+Z', action: () => app.undo() },

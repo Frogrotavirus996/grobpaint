@@ -244,6 +244,20 @@ body {
 #alpha-value { width: 28px; text-align: right; font-size: 11px; }
 
 /* Palette */
+#palette-header {
+  display: flex;
+  margin-bottom: 4px;
+}
+#palette-select {
+  flex: 1;
+  background: var(--bg-light);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
 #palette {
   display: grid;
   grid-template-columns: repeat(8, 1fr);

@@ -1,6 +1,6 @@
 // ===== GrobPaint App — initialization, events, keyboard shortcuts, file I/O =====
 
-import { bus } from './core.js';
+import { bus, Selection } from './core.js';
 import { Renderer } from './renderer.js';
 import { ToolManager } from './tools.js';
 import { ColorSystem, LayersPanel, DocManager, ToolOptionsBar, MenuBar, NewImageDialog, CanvasSizeDialog, ScaleImageDialog } from './ui.js';
@@ -652,6 +652,111 @@ class App {
     doc.activeLayerIndex = 0;
     bus.emit('layers:changed');
     bus.emit('canvas:dirty');
+  }
+
+  /** Split the current document's active layer into layers by fixed square frames */
+  splitSpriteSheet() {
+    const doc = this.doc;
+    if (!doc) return;
+    const layer = doc.activeLayer;
+    if (!layer) return;
+
+    const frameSize = doc.height; // square frames: width = height
+    const frameCount = Math.floor(doc.width / frameSize);
+    if (frameCount <= 1) return; // nothing to split
+
+    doc.saveStructureState();
+
+    // Extract each frame into a new layer
+    const srcIdx = doc.activeLayerIndex;
+    for (let i = 0; i < frameCount; i++) {
+      const newLayer = doc.addLayer(`Frame ${i + 1}`);
+      newLayer.ctx.drawImage(
+        layer.canvas,
+        i * frameSize, 0, frameSize, frameSize,
+        0, 0, frameSize, frameSize
+      );
+    }
+
+    // Resize canvas to single frame size, remove source layer
+    doc.layers.splice(srcIdx, 1);
+    doc.activeLayerIndex = Math.min(srcIdx, doc.layers.length - 1);
+
+    // Resize all layer canvases and doc to frame size
+    for (const l of doc.layers) {
+      const tmp = document.createElement('canvas');
+      tmp.width = frameSize; tmp.height = frameSize;
+      tmp.getContext('2d').drawImage(l.canvas, 0, 0);
+      l.canvas.width = frameSize;
+      l.canvas.height = frameSize;
+      l.ctx.drawImage(tmp, 0, 0);
+    }
+    doc.width = frameSize;
+    doc.height = frameSize;
+    doc.composite.width = frameSize;
+    doc.composite.height = frameSize;
+    doc.selection = new Selection(frameSize, frameSize);
+
+    bus.emit('layers:changed');
+    bus.emit('canvas:dirty');
+    document.getElementById('status-size').textContent = `${doc.width} x ${doc.height}`;
+    const vp = document.getElementById('viewport').getBoundingClientRect();
+    doc.fitInView(vp.width, vp.height);
+    document.getElementById('status-zoom').textContent = Math.round(doc.zoom * 100) + '%';
+  }
+
+  /** Export visible layers as a horizontal sprite sheet PNG */
+  async exportSpriteSheet() {
+    const doc = this.doc;
+    if (!doc) return;
+
+    const visibleLayers = doc.layers.filter(l => l.visible);
+    if (visibleLayers.length === 0) return;
+
+    const fw = doc.width;
+    const fh = doc.height;
+    const sheetW = fw * visibleLayers.length;
+
+    const sheet = document.createElement('canvas');
+    sheet.width = sheetW;
+    sheet.height = fh;
+    const ctx = sheet.getContext('2d');
+
+    for (let i = 0; i < visibleLayers.length; i++) {
+      ctx.drawImage(visibleLayers[i].canvas, i * fw, 0);
+    }
+
+    // Export as PNG blob and save via server or download
+    const blob = await new Promise(r => sheet.toBlob(r, 'image/png'));
+    const base64 = await new Promise(r => {
+      const reader = new FileReader();
+      reader.onload = () => r(reader.result.split(',')[1]);
+      reader.readAsDataURL(blob);
+    });
+
+    const defaultName = (doc.name || 'spritesheet').replace(/\.[^.]+$/, '') + '_sheet.png';
+
+    try {
+      const resp = await fetch('/api/file/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data: base64,
+          filetypes: 'PNG files (*.png)|*.png',
+          defaultExt: '.png',
+          defaultName: defaultName,
+        }),
+      });
+      const result = await resp.json();
+      if (result.error) return;
+    } catch (e) {
+      // Fallback: download via link
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = defaultName;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   }
 
   cropToSelection() {
