@@ -900,21 +900,74 @@ class App {
 
   // ===== File I/O =====
 
-  async openFile() {
+  /** Check if the Python server API is available (cached after first check) */
+  async _hasServer() {
+    if (this._serverAvailable !== undefined) return this._serverAvailable;
     try {
+      // POST with no body — server returns {cancelled:true} or similar, not a 404
       const resp = await fetch('/api/file/open', { method: 'POST' });
-      const data = await resp.json();
-      if (data.cancelled) return;
-      if (data.error) { alert('Error: ' + data.error); return; }
+      this._serverAvailable = resp.ok;
+    } catch {
+      this._serverAvailable = false;
+    }
+    return this._serverAvailable;
+  }
 
-      if (data.name?.endsWith('.gbp')) {
-        // Redirect to project open
-        this.openProject();
+  /** Prompt user to pick a file via browser <input type="file"> */
+  _browserPickFile(accept) {
+    return new Promise(resolve => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      if (accept) input.accept = accept;
+      input.addEventListener('change', () => {
+        resolve(input.files[0] || null);
+      });
+      // Handle cancel (input won't fire change)
+      input.addEventListener('cancel', () => resolve(null));
+      input.click();
+    });
+  }
+
+  /** Trigger a browser download of a Blob */
+  _browserDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async openFile() {
+    const hasServer = await this._hasServer();
+    if (hasServer) {
+      try {
+        const resp = await fetch('/api/file/open', { method: 'POST' });
+        const data = await resp.json();
+        if (data.cancelled) return;
+        if (data.error) { alert('Error: ' + data.error); return; }
+        if (data.name?.endsWith('.gbp')) {
+          this.openProject();
+          return;
+        }
+        bus.emit('doc:open-image', data.data, data.name);
+      } catch (e) {
+        alert('Error opening file: ' + e.message);
+      }
+    } else {
+      // Browser fallback
+      const file = await this._browserPickFile('image/png,image/jpeg,image/bmp,image/gif,.gbp');
+      if (!file) return;
+      if (file.name.endsWith('.gbp')) {
+        await this._browserOpenProject(file);
         return;
       }
-      bus.emit('doc:open-image', data.data, data.name);
-    } catch (e) {
-      alert('Error opening file: ' + e.message);
+      const dataUrl = await new Promise(r => {
+        const reader = new FileReader();
+        reader.onload = () => r(reader.result);
+        reader.readAsDataURL(file);
+      });
+      bus.emit('doc:open-image', dataUrl, file.name);
     }
   }
 
@@ -922,22 +975,34 @@ class App {
     const doc = this.doc;
     if (!doc) return;
     doc.compositeAll();
-    const dataUrl = doc.composite.toDataURL('image/png');
-    try {
-      const resp = await fetch('/api/file/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: dataUrl, path: doc.path, ext: '.png', defaultName: doc.name.replace(/\.(gbp)$/i, '') }),
-      });
-      const result = await resp.json();
-      if (result.cancelled) return;
-      if (result.error) { alert('Error: ' + result.error); return; }
-      doc.path = result.path;
-      doc.name = result.name;
+
+    const hasServer = await this._hasServer();
+    if (hasServer) {
+      const dataUrl = doc.composite.toDataURL('image/png');
+      try {
+        const resp = await fetch('/api/file/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: dataUrl, path: doc.path, ext: '.png', defaultName: doc.name.replace(/\.(gbp)$/i, '') }),
+        });
+        const result = await resp.json();
+        if (result.cancelled) return;
+        if (result.error) { alert('Error: ' + result.error); return; }
+        doc.path = result.path;
+        doc.name = result.name;
+        doc.dirty = false;
+        this.docManager.renderTabs();
+      } catch (e) {
+        alert('Error saving file: ' + e.message);
+      }
+    } else {
+      // Browser fallback
+      const blob = await new Promise(r => doc.composite.toBlob(r, 'image/png'));
+      const name = (doc.name || 'Untitled').replace(/\.(gbp)$/i, '').replace(/\.[^.]+$/, '') + '.png';
+      this._browserDownload(blob, name);
+      doc.name = name;
       doc.dirty = false;
       this.docManager.renderTabs();
-    } catch (e) {
-      alert('Error saving file: ' + e.message);
     }
   }
 
@@ -972,36 +1037,82 @@ class App {
       data: l.toDataURL(),
     }));
 
-    try {
-      const resp = await fetch('/api/project/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          manifest,
-          layers,
-          path: doc.projectPath,
-          defaultName: doc.name.replace(/\.(png|jpg|jpeg|bmp|gbp)$/i, '') + '.gbp',
-        }),
-      });
-      const result = await resp.json();
-      if (result.cancelled) return;
-      if (result.error) { alert('Error: ' + result.error); return; }
-      doc.projectPath = result.path;
-      doc.name = result.name;
+    const hasServer = await this._hasServer();
+    if (hasServer) {
+      try {
+        const resp = await fetch('/api/project/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            manifest,
+            layers,
+            path: doc.projectPath,
+            defaultName: doc.name.replace(/\.(png|jpg|jpeg|bmp|gbp)$/i, '') + '.gbp',
+          }),
+        });
+        const result = await resp.json();
+        if (result.cancelled) return;
+        if (result.error) { alert('Error: ' + result.error); return; }
+        doc.projectPath = result.path;
+        doc.name = result.name;
+        doc.dirty = false;
+        this.docManager.renderTabs();
+      } catch (e) {
+        alert('Error saving project: ' + e.message);
+      }
+    } else {
+      // Browser fallback: build ZIP with JSZip
+      const zip = new JSZip();
+      zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+      const layersFolder = zip.folder('layers');
+      for (const l of layers) {
+        const b64 = l.data.split(',')[1];
+        layersFolder.file(l.file, b64, { base64: true });
+      }
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const name = (doc.name || 'Untitled').replace(/\.(png|jpg|jpeg|bmp|gbp)$/i, '') + '.gbp';
+      this._browserDownload(blob, name);
+      doc.name = name;
       doc.dirty = false;
       this.docManager.renderTabs();
-    } catch (e) {
-      alert('Error saving project: ' + e.message);
     }
   }
 
   async openProject() {
+    const hasServer = await this._hasServer();
+    if (hasServer) {
+      try {
+        const resp = await fetch('/api/project/open', { method: 'POST' });
+        const data = await resp.json();
+        if (data.cancelled) return;
+        if (data.error) { alert('Error: ' + data.error); return; }
+        bus.emit('doc:open-project', data);
+      } catch (e) {
+        alert('Error opening project: ' + e.message);
+      }
+    } else {
+      // Browser fallback
+      const file = await this._browserPickFile('.gbp');
+      if (!file) return;
+      await this._browserOpenProject(file);
+    }
+  }
+
+  /** Open a .gbp project file from a browser File object */
+  async _browserOpenProject(file) {
     try {
-      const resp = await fetch('/api/project/open', { method: 'POST' });
-      const data = await resp.json();
-      if (data.cancelled) return;
-      if (data.error) { alert('Error: ' + data.error); return; }
-      bus.emit('doc:open-project', data);
+      const zip = await JSZip.loadAsync(file);
+      const manifestJson = await zip.file('manifest.json').async('string');
+      const manifest = JSON.parse(manifestJson);
+      const layers = [];
+      for (const layerInfo of manifest.layers) {
+        const pngData = await zip.file(`layers/${layerInfo.file}`).async('base64');
+        layers.push({
+          ...layerInfo,
+          data: `data:image/png;base64,${pngData}`,
+        });
+      }
+      bus.emit('doc:open-project', { manifest, layers, name: file.name, path: null });
     } catch (e) {
       alert('Error opening project: ' + e.message);
     }
