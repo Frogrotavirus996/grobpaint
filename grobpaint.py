@@ -67,7 +67,6 @@ def file_dialog_save(filetypes=None, default_ext=None, default_name=None):
             file_types=filetypes or ("PNG Image (*.png)",
                                      "JPEG Image (*.jpg)",
                                      "BMP Image (*.bmp)",
-                                     "GrobPaint Project (*.gbp)",
                                      "All Files (*.*)"),
             save_filename=default_name or "",
         )
@@ -79,9 +78,19 @@ def file_dialog_save(filetypes=None, default_ext=None, default_name=None):
         from tkinter import filedialog
         root = tk.Tk()
         root.withdraw()
-        ft = [("PNG Image", "*.png"), ("JPEG Image", "*.jpg"),
-              ("BMP Image", "*.bmp"), ("GrobPaint Project", "*.gbp"),
-              ("All Files", "*.*")]
+        if filetypes:
+            # Convert pywebview format "Desc (*.ext)" to tkinter [("Desc", "*.ext")]
+            import re
+            ft = []
+            for entry in filetypes:
+                if isinstance(entry, tuple) and len(entry) == 2:
+                    ft.append(entry)
+                else:
+                    m = re.match(r"(.+?)\s*\((\*\.\w+)\)", entry)
+                    ft.append((m.group(1).strip(), m.group(2)) if m else ("All Files", "*.*"))
+        else:
+            ft = [("PNG Image", "*.png"), ("JPEG Image", "*.jpg"),
+                  ("BMP Image", "*.bmp"), ("All Files", "*.*")]
         path = filedialog.asksaveasfilename(
             filetypes=ft, defaultextension=ext,
             initialfile=default_name or "")

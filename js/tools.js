@@ -118,6 +118,39 @@ export function floodSelect(imageData, startX, startY, tolerance) {
   return { mask, bounds: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 } };
 }
 
+/** Global select — selects ALL pixels matching target color, not just connected */
+export function globalSelect(imageData, startX, startY, tolerance) {
+  const { width, height, data } = imageData;
+  startX = Math.round(startX);
+  startY = Math.round(startY);
+  if (startX < 0 || startX >= width || startY < 0 || startY >= height) return null;
+
+  const si = (startY * width + startX) * 4;
+  const sr = data[si], sg = data[si + 1], sb = data[si + 2], sa = data[si + 3];
+  const tol = tolerance * 4;
+  const mask = new Uint8Array(width * height);
+  let minX = width, maxX = 0, minY = height, maxY = 0;
+  let found = false;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const pi = (y * width + x) * 4;
+      const diff = Math.abs(data[pi] - sr) + Math.abs(data[pi + 1] - sg)
+                 + Math.abs(data[pi + 2] - sb) + Math.abs(data[pi + 3] - sa);
+      if (diff <= tol) {
+        mask[y * width + x] = 1;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        found = true;
+      }
+    }
+  }
+  if (!found) return null;
+  return { mask, bounds: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 } };
+}
+
 /** Parse CSS color to {r,g,b,a} */
 export function parseColor(str) {
   const ctx = document.createElement('canvas').getContext('2d');
@@ -920,7 +953,8 @@ export class MagicWandTool extends Tool {
   onPointerDown(doc, x, y, e) {
     doc.compositeAll();
     const imageData = doc.compositeCtx.getImageData(0, 0, doc.width, doc.height);
-    const result = floodSelect(imageData, Math.floor(x), Math.floor(y), bus._tolerance);
+    const selectFn = bus._wandGlobal ? globalSelect : floodSelect;
+    const result = selectFn(imageData, Math.floor(x), Math.floor(y), bus._tolerance);
     if (result) {
       doc.selection.setMask(result.mask, result.bounds);
     } else {

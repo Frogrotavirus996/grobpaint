@@ -97,6 +97,7 @@ export class Selection {
     this.bounds = null; // {x, y, w, h} or null
     this.active = false;
     this._animOffset = 0;
+    this._edgeSegs = null; // precomputed edge segments for mask outline
   }
 
   setRect(x, y, w, h) {
@@ -110,18 +111,21 @@ export class Selection {
       for (let col = x; col < x + w; col++)
         this.mask[row * this.width + col] = 1;
     this.bounds = { x, y, w, h };
+    this._edgeSegs = null; // rect uses strokeRect shortcut
     this.active = true;
   }
 
   setMask(mask, bounds) {
     this.mask = mask;
     this.bounds = bounds;
+    this._computeEdges();
     this.active = true;
   }
 
   clear() {
     this.mask = null;
     this.bounds = null;
+    this._edgeSegs = null;
     this.active = false;
   }
 
@@ -198,30 +202,75 @@ export class Selection {
     layer.ctx.putImageData(cur, 0, 0);
   }
 
+  /** Precompute edge segments for non-rectangular masks (merged for perf) */
+  _computeEdges() {
+    if (!this.mask || !this.bounds) { this._edgeSegs = null; return; }
+    const { x: bx, y: by, w: bw, h: bh } = this.bounds;
+    const W = this.width, H = this.height, mask = this.mask;
+    const segs = []; // flat array: x1, y1, x2, y2, ...
+
+    // Horizontal edges — scan row by row, merge adjacent segments
+    for (let y = by; y < by + bh; y++) {
+      let topStart = -1, botStart = -1;
+      for (let x = bx; x <= bx + bw; x++) {
+        const sel = x < bx + bw && mask[y * W + x];
+        const needTop = sel && (y === 0 || !mask[(y - 1) * W + x]);
+        const needBot = sel && (y === H - 1 || !mask[(y + 1) * W + x]);
+        if (needTop) { if (topStart < 0) topStart = x; }
+        else if (topStart >= 0) { segs.push(topStart, y, x, y); topStart = -1; }
+        if (needBot) { if (botStart < 0) botStart = x; }
+        else if (botStart >= 0) { segs.push(botStart, y + 1, x, y + 1); botStart = -1; }
+      }
+    }
+    // Vertical edges — scan column by column, merge adjacent segments
+    for (let x = bx; x < bx + bw; x++) {
+      let leftStart = -1, rightStart = -1;
+      for (let y = by; y <= by + bh; y++) {
+        const sel = y < by + bh && mask[y * W + x];
+        const needLeft = sel && (x === 0 || !mask[y * W + (x - 1)]);
+        const needRight = sel && (x === W - 1 || !mask[y * W + (x + 1)]);
+        if (needLeft) { if (leftStart < 0) leftStart = y; }
+        else if (leftStart >= 0) { segs.push(x, leftStart, x, y); leftStart = -1; }
+        if (needRight) { if (rightStart < 0) rightStart = y; }
+        else if (rightStart >= 0) { segs.push(x + 1, rightStart, x + 1, y); rightStart = -1; }
+      }
+    }
+    this._edgeSegs = segs.length > 0 ? segs : null;
+  }
+
   /** Draw marching ants on the overlay ctx */
   drawAnts(ctx, zoom, panX, panY) {
     if (!this.active || !this.bounds) return;
     this._animOffset = (this._animOffset + 0.5) % 16;
-    const b = this.bounds;
     ctx.save();
     ctx.setLineDash([4, 4]);
-    ctx.lineDashOffset = -this._animOffset;
-    ctx.strokeStyle = 'white';
     ctx.lineWidth = 1;
-    ctx.strokeRect(
-      b.x * zoom + panX + 0.5,
-      b.y * zoom + panY + 0.5,
-      b.w * zoom,
-      b.h * zoom
-    );
-    ctx.strokeStyle = 'black';
-    ctx.lineDashOffset = -(this._animOffset + 4);
-    ctx.strokeRect(
-      b.x * zoom + panX + 0.5,
-      b.y * zoom + panY + 0.5,
-      b.w * zoom,
-      b.h * zoom
-    );
+
+    if (this._edgeSegs) {
+      // Non-rectangular mask: draw precomputed edge segments
+      const segs = this._edgeSegs;
+      for (let pass = 0; pass < 2; pass++) {
+        ctx.strokeStyle = pass === 0 ? 'white' : 'black';
+        ctx.lineDashOffset = -(this._animOffset + pass * 4);
+        ctx.beginPath();
+        for (let i = 0; i < segs.length; i += 4) {
+          ctx.moveTo(segs[i] * zoom + panX + 0.5, segs[i + 1] * zoom + panY + 0.5);
+          ctx.lineTo(segs[i + 2] * zoom + panX + 0.5, segs[i + 3] * zoom + panY + 0.5);
+        }
+        ctx.stroke();
+      }
+    } else {
+      // Rectangular selection: fast strokeRect path
+      const b = this.bounds;
+      const sx = b.x * zoom + panX + 0.5, sy = b.y * zoom + panY + 0.5;
+      const sw = b.w * zoom, sh = b.h * zoom;
+      ctx.lineDashOffset = -this._animOffset;
+      ctx.strokeStyle = 'white';
+      ctx.strokeRect(sx, sy, sw, sh);
+      ctx.lineDashOffset = -(this._animOffset + 4);
+      ctx.strokeStyle = 'black';
+      ctx.strokeRect(sx, sy, sw, sh);
+    }
     ctx.restore();
   }
 }

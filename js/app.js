@@ -36,6 +36,11 @@ class App {
     this._initClipboard();
     this._initGrid();
 
+    // Re-fit after first layout (viewport may have 0 size during constructor)
+    requestAnimationFrame(() => {
+      if (this.doc) this.fitInView();
+    });
+
     // Flip events
     bus.on('flip:horizontal', () => this.flipHorizontal());
     bus.on('flip:vertical', () => this.flipVertical());
@@ -922,7 +927,7 @@ class App {
       const resp = await fetch('/api/file/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: dataUrl, path: doc.path, ext: '.png', defaultName: doc.name }),
+        body: JSON.stringify({ data: dataUrl, path: doc.path, ext: '.png', defaultName: doc.name.replace(/\.(gbp)$/i, '') }),
       });
       const result = await resp.json();
       if (result.cancelled) return;
@@ -975,7 +980,7 @@ class App {
           manifest,
           layers,
           path: doc.projectPath,
-          defaultName: doc.name,
+          defaultName: doc.name.replace(/\.(png|jpg|jpeg|bmp|gbp)$/i, '') + '.gbp',
         }),
       });
       const result = await resp.json();

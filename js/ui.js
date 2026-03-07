@@ -603,6 +603,7 @@ export class ToolOptionsBar {
     bus._fontSize = 24;
     bus._fontFamily = 'Arial';
     bus._interpolation = 'nearest';
+    bus._wandGlobal = false;
 
     bus.on('tool:changed', name => this.render(name));
     this.render('pencil');
@@ -644,6 +645,19 @@ export class ToolOptionsBar {
           bus._tolerance = v;
           this.render(toolName);
         })));
+    }
+
+    // Wand mode (contiguous / global)
+    if (toolName === 'wand') {
+      const modeSelect = document.createElement('select');
+      for (const [val, label] of [['local', 'Contiguous'], ['global', 'Global']]) {
+        const opt = document.createElement('option');
+        opt.value = val; opt.textContent = label;
+        if ((val === 'global') === bus._wandGlobal) opt.selected = true;
+        modeSelect.appendChild(opt);
+      }
+      modeSelect.addEventListener('change', () => bus._wandGlobal = modeSelect.value === 'global');
+      bar.appendChild(this._group('Mode:', modeSelect));
     }
 
     // Interpolation (scale)
