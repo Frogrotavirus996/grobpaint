@@ -592,6 +592,8 @@ export class LineTool extends Tool {
   }
 
   onPointerDown(doc, x, y, e) {
+    const layer = doc.activeLayer;
+    if (!layer || !layer.visible) return;
     this._drawing = true;
     this._startX = x; this._startY = y;
     this._endX = x; this._endY = y;
@@ -685,6 +687,8 @@ export class RectangleTool extends Tool {
   }
 
   onPointerDown(doc, x, y, e) {
+    const layer = doc.activeLayer;
+    if (!layer || !layer.visible) return;
     this._drawing = true;
     this._startX = x; this._startY = y;
     this._endX = x; this._endY = y;
@@ -774,6 +778,8 @@ export class EllipseTool extends Tool {
   }
 
   onPointerDown(doc, x, y, e) {
+    const layer = doc.activeLayer;
+    if (!layer || !layer.visible) return;
     this._drawing = true;
     this._startX = x; this._startY = y;
     this._endX = x; this._endY = y;
@@ -863,6 +869,8 @@ export class TextTool extends Tool {
       this._commit();
       return;
     }
+    const layer = doc.activeLayer;
+    if (!layer || !layer.visible) return;
     this._startX = x;
     this._startY = y;
     this._active = true;
@@ -1072,6 +1080,7 @@ export class MovePixelsTool extends Tool {
     this._buffer = null;
     this._bufferW = 0;
     this._bufferH = 0;
+    this._sourceLayer = null; // layer the content was cut from
     // Transform state (center-based)
     this._tx = 0; this._ty = 0;
     this._scaleX = 1; this._scaleY = 1;
@@ -1200,6 +1209,7 @@ export class MovePixelsTool extends Tool {
     this._bufferW = sw; this._bufferH = sh;
     this._tx = sx + sw / 2; this._ty = sy + sh / 2;
     this._scaleX = 1; this._scaleY = 1; this._rotation = 0;
+    this._sourceLayer = layer;
     this._active = true;
     bus.emit('canvas:dirty');
     return true;
@@ -1209,7 +1219,8 @@ export class MovePixelsTool extends Tool {
     if (!this._active || !this._buffer) return;
     const doc = bus._app?.doc;
     if (!doc) return;
-    const layer = doc.activeLayer;
+    // Commit back to the layer the content was cut from, not current active
+    const layer = this._sourceLayer || doc.activeLayer;
     const ctx = layer.ctx;
     const interp = bus._interpolation || 'nearest';
     ctx.imageSmoothingEnabled = interp !== 'nearest';
@@ -1231,13 +1242,13 @@ export class MovePixelsTool extends Tool {
         Math.ceil(Math.max(...xs)) - Math.floor(Math.min(...xs)),
         Math.ceil(Math.max(...ys)) - Math.floor(Math.min(...ys)));
     }
-    this._buffer = null; this._active = false;
+    this._buffer = null; this._active = false; this._sourceLayer = null;
     bus.emit('canvas:dirty');
   }
 
   cancel() {
     if (!this._active) return;
-    this._active = false; this._buffer = null; this._dragging = false;
+    this._active = false; this._buffer = null; this._dragging = false; this._sourceLayer = null;
     const doc = bus._app?.doc;
     if (doc) doc.undo();
     bus.emit('canvas:dirty');
