@@ -1366,13 +1366,30 @@ export class MovePixelsTool extends Tool {
       this._tx = this._dragStartTx + localCenterX * cos - localCenterY * sin;
       this._ty = this._dragStartTy + localCenterX * sin + localCenterY * cos;
     }
+    if (this._active) this._syncSelection(doc);
     bus.emit('canvas:dirty');
   }
 
-  onPointerUp() {
+  /** Update doc.selection to match the current transform AABB */
+  _syncSelection(doc) {
+    if (!doc.selection.active) return;
+    const corners = this._getCorners();
+    const xs = corners.map(c => c.x), ys = corners.map(c => c.y);
+    const minX = Math.floor(Math.min(...xs));
+    const minY = Math.floor(Math.min(...ys));
+    const maxX = Math.ceil(Math.max(...xs));
+    const maxY = Math.ceil(Math.max(...ys));
+    doc.selection.setRect(
+      Math.max(0, minX), Math.max(0, minY),
+      Math.min(doc.width, maxX) - Math.max(0, minX),
+      Math.min(doc.height, maxY) - Math.max(0, minY));
+  }
+
+  onPointerUp(doc) {
     if (!this._dragging) return;
     this._dragging = false;
     this._dragMode = null; this._dragHandle = null;
+    if (this._active) this._syncSelection(doc);
     bus.emit('canvas:dirty');
   }
 
@@ -1405,7 +1422,7 @@ export class MovePixelsTool extends Tool {
     ctx.imageSmoothingEnabled = interp !== 'nearest';
     if (interp === 'bicubic') ctx.imageSmoothingQuality = 'high';
     else ctx.imageSmoothingQuality = 'low';
-    ctx.globalAlpha = 0.85;
+    ctx.globalAlpha = this._dragging ? 0.7 : 1;
     ctx.drawImage(this._buffer,
       -this._bufferW * z / 2, -this._bufferH * z / 2,
       this._bufferW * z, this._bufferH * z);

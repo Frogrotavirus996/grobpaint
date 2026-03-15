@@ -720,16 +720,16 @@ class App {
     // Store internally for in-app paste fallback
     bus._copiedCanvas = tmp;
 
-    tmp.toBlob(blob => {
-      if (!blob) return;
-      try {
-        navigator.clipboard.write([
-          new ClipboardItem({ 'image/png': blob })
-        ]);
-      } catch (err) {
-        // Clipboard API may not be available — internal copy still works
-      }
-    }, 'image/png');
+    // Write to system clipboard — pass a Promise so the write stays
+    // in the user gesture context (toBlob callback loses it)
+    try {
+      const blobPromise = new Promise(resolve => tmp.toBlob(resolve, 'image/png'));
+      navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': blobPromise })
+      ]);
+    } catch (err) {
+      // Clipboard API may not be available — internal copy still works
+    }
 
     bus._lastClipboardSize = { width: sw, height: sh };
   }
