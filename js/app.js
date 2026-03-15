@@ -340,7 +340,7 @@ class App {
             return;
           case 'c': e.preventDefault(); this.copySelection(); return;
           case 'x': e.preventDefault(); this.cutSelection(); return;
-          case 'v': return; // let native paste event handle it
+          case 'v': e.preventDefault(); this._pasteWithFallback(); return;
           case 'a': e.preventDefault(); this.selectAll(); return;
           case 'd': e.preventDefault(); this.deselect(); return;
           case 'g': e.preventDefault(); bus.emit('grid:toggle'); return;
@@ -417,10 +417,29 @@ class App {
           }
         }
       }
-      // Last resort: try async clipboard API
+      // Last resort: try async clipboard API, then internal buffer
       e.preventDefault();
-      this.pasteFromClipboard();
+      this._pasteWithFallback();
     });
+  }
+
+  async _pasteWithFallback() {
+    // Try async clipboard API first
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find(t => t.startsWith('image/'));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          this._pasteImageBlob(blob);
+          return;
+        }
+      }
+    } catch {}
+    // Fall back to internal copied canvas
+    if (bus._copiedCanvas) {
+      this._pasteInternalCanvas(bus._copiedCanvas);
+    }
   }
 
   _initGrid() {
@@ -509,6 +528,24 @@ class App {
     } catch {
       // Clipboard API may not be available; fall through silently
     }
+  }
+
+  _pasteInternalCanvas(srcCanvas) {
+    const doc = this.doc;
+    if (!doc) return;
+    const needW = Math.max(doc.width, srcCanvas.width);
+    const needH = Math.max(doc.height, srcCanvas.height);
+    if (needW > doc.width || needH > doc.height) {
+      doc.saveStructureState();
+      doc.resizeCanvas(needW, needH, 0, 0);
+      document.getElementById('status-size').textContent = `${doc.width} x ${doc.height}`;
+    } else {
+      doc.saveStructureState();
+    }
+    const layer = doc.addLayer('Pasted');
+    layer.ctx.drawImage(srcCanvas, 0, 0);
+    bus.emit('layers:changed');
+    bus.emit('canvas:dirty');
   }
 
   _pasteImageBlob(blob) {
@@ -663,6 +700,9 @@ class App {
       tctx.putImageData(id, 0, 0);
     }
 
+    // Store internally for in-app paste fallback
+    bus._copiedCanvas = tmp;
+
     tmp.toBlob(blob => {
       if (!blob) return;
       try {
@@ -670,7 +710,7 @@ class App {
           new ClipboardItem({ 'image/png': blob })
         ]);
       } catch (err) {
-        // Clipboard API may not be available
+        // Clipboard API may not be available — internal copy still works
       }
     }, 'image/png');
 
