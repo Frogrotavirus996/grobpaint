@@ -606,12 +606,14 @@ class App {
 
   selectAll() {
     if (!this.doc) return;
+    this.doc.saveSelectionState();
     this.doc.selection.setRect(0, 0, this.doc.width, this.doc.height);
     bus.emit('canvas:dirty');
   }
 
   deselect() {
     if (!this.doc) return;
+    this.doc.saveSelectionState();
     this.doc.selection.clear();
     bus.emit('canvas:dirty');
   }

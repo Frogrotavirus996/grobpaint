@@ -442,6 +442,16 @@ export class PaintDocument {
     this.dirty = true;
   }
 
+  /** Save selection state for undo */
+  saveSelectionState() {
+    this.history.push({
+      type: 'selection',
+      mask: this.selection.mask ? new Uint8Array(this.selection.mask) : null,
+      bounds: this.selection.bounds ? { ...this.selection.bounds } : null,
+      active: this.selection.active,
+    });
+  }
+
   /** Save full structure state for undo (add/delete/reorder layers) */
   saveStructureState() {
     this.history.push({
@@ -467,6 +477,24 @@ export class PaintDocument {
       const current = this.layers[state.layerIndex].getSnapshot();
       this.layers[state.layerIndex].restoreSnapshot(state.imageData);
       state.imageData = current; // swap for redo
+    } else if (state.type === 'selection') {
+      const cur = {
+        type: 'selection',
+        mask: this.selection.mask ? new Uint8Array(this.selection.mask) : null,
+        bounds: this.selection.bounds ? { ...this.selection.bounds } : null,
+        active: this.selection.active,
+      };
+      if (state.mask) {
+        this.selection.mask = state.mask;
+        this.selection.bounds = state.bounds;
+        this.selection._computeEdges();
+        this.selection.active = state.active;
+      } else {
+        this.selection.clear();
+      }
+      state.mask = cur.mask;
+      state.bounds = cur.bounds;
+      state.active = cur.active;
     } else if (state.type === 'structure') {
       // Save current for redo
       const current = {
@@ -504,6 +532,24 @@ export class PaintDocument {
       const current = this.layers[state.layerIndex].getSnapshot();
       this.layers[state.layerIndex].restoreSnapshot(state.imageData);
       state.imageData = current;
+    } else if (state.type === 'selection') {
+      const cur = {
+        type: 'selection',
+        mask: this.selection.mask ? new Uint8Array(this.selection.mask) : null,
+        bounds: this.selection.bounds ? { ...this.selection.bounds } : null,
+        active: this.selection.active,
+      };
+      if (state.mask) {
+        this.selection.mask = state.mask;
+        this.selection.bounds = state.bounds;
+        this.selection._computeEdges();
+        this.selection.active = state.active;
+      } else {
+        this.selection.clear();
+      }
+      state.mask = cur.mask;
+      state.bounds = cur.bounds;
+      state.active = cur.active;
     } else if (state.type === 'structure') {
       const current = {
         type: 'structure',

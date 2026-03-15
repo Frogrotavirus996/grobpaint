@@ -640,11 +640,15 @@ export class ToolOptionsBar {
     // Tolerance (fill, wand)
     if (['fill', 'wand'].includes(toolName)) {
       bar.appendChild(this._group('Tolerance:',
-        this._numberInput(bus._tolerance, 0, 255, v => bus._tolerance = v)));
+        this._numberInput(bus._tolerance, 0, 255, v => {
+          bus._tolerance = v;
+          if (toolName === 'wand') bus.emit('wand:reselect');
+        })));
       bar.appendChild(this._group('',
         this._rangeInput(bus._tolerance, 0, 255, v => {
           bus._tolerance = v;
-          this.render(toolName);
+          if (toolName === 'wand') bus.emit('wand:reselect');
+          else this.render(toolName);
         })));
     }
 
@@ -662,7 +666,7 @@ export class ToolOptionsBar {
     }
 
     // Interpolation (move tools)
-    if (toolName === 'move' || toolName === 'moveselection') {
+    if (toolName === 'move') {
       const interpSelect = document.createElement('select');
       for (const [val, label] of [['nearest', 'Nearest Neighbor'], ['bilinear', 'Bilinear'], ['bicubic', 'Bicubic']]) {
         const opt = document.createElement('option');

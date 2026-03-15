@@ -227,6 +227,18 @@ function applyHandleDrag(handleId, origBounds, dx, dy) {
   return { x, y, w: Math.max(1, w), h: Math.max(1, h) };
 }
 
+/** Get the CSS resize cursor for a handle ID, accounting for rotation */
+function handleCursor(id, rotation) {
+  // Base angles for each handle (degrees from north, clockwise)
+  const baseAngles = { n: 0, ne: 45, e: 90, se: 135, s: 180, sw: 225, w: 270, nw: 315 };
+  const cursors = ['ns-resize', 'nesw-resize', 'ew-resize', 'nwse-resize'];
+  const base = baseAngles[id] || 0;
+  const deg = ((base + rotation * 180 / Math.PI) % 360 + 360) % 360;
+  // Snap to nearest 45-degree sector, map to one of 4 cursor types
+  const idx = Math.round(deg / 45) % 4;
+  return cursors[idx];
+}
+
 // ===== Tool Base =====
 
 class Tool {
@@ -869,6 +881,7 @@ export class SelectRectTool extends Tool {
     // Check if clicking on a handle first
     const handle = doc.selection.active ? hitHandle(doc, doc.selection.bounds, x, y) : null;
     if (handle) {
+      doc.saveSelectionState();
       this._resizing = true;
       this._handle = handle;
       // Save original bounds for resize calculation
@@ -880,6 +893,7 @@ export class SelectRectTool extends Tool {
     }
 
     // Otherwise start a new selection
+    doc.saveSelectionState();
     this._drawing = true;
     this._startX = x; this._startY = y;
     this._endX = x; this._endY = y;
@@ -948,13 +962,44 @@ export class SelectRectTool extends Tool {
 export class MagicWandTool extends Tool {
   constructor() {
     super('Wand', 'w');
+    this._lastX = -1;
+    this._lastY = -1;
+    this._imageData = null; // cached composite for live tolerance updates
+    bus.on('wand:reselect', () => this._reselect());
+  }
+
+  activate() {
+    this._lastX = -1;
+    this._lastY = -1;
+    this._imageData = null;
+  }
+
+  deactivate() {
+    this._imageData = null;
   }
 
   onPointerDown(doc, x, y, e) {
+    doc.saveSelectionState();
     doc.compositeAll();
-    const imageData = doc.compositeCtx.getImageData(0, 0, doc.width, doc.height);
+    this._imageData = doc.compositeCtx.getImageData(0, 0, doc.width, doc.height);
+    this._lastX = Math.floor(x);
+    this._lastY = Math.floor(y);
     const selectFn = bus._wandGlobal ? globalSelect : floodSelect;
-    const result = selectFn(imageData, Math.floor(x), Math.floor(y), bus._tolerance);
+    const result = selectFn(this._imageData, this._lastX, this._lastY, bus._tolerance);
+    if (result) {
+      doc.selection.setMask(result.mask, result.bounds);
+    } else {
+      doc.selection.clear();
+    }
+    bus.emit('canvas:dirty');
+  }
+
+  /** Re-run selection with current tolerance (called when slider changes) */
+  _reselect() {
+    const doc = bus._app?.doc;
+    if (!doc || this._lastX < 0 || !this._imageData) return;
+    const selectFn = bus._wandGlobal ? globalSelect : floodSelect;
+    const result = selectFn(this._imageData, this._lastX, this._lastY, bus._tolerance);
     if (result) {
       doc.selection.setMask(result.mask, result.bounds);
     } else {
@@ -1221,13 +1266,13 @@ export class MovePixelsTool extends Tool {
         if (!hit) vp.style.cursor = 'move';
         else if (hit.mode === 'rotate') vp.style.cursor = 'grab';
         else if (hit.mode === 'move') vp.style.cursor = 'move';
-        else vp.style.cursor = 'nwse-resize';
+        else vp.style.cursor = handleCursor(hit.handle.id, this._rotation);
       } else {
         const hit = this._hitTestSelection(doc, x, y);
         if (!hit) vp.style.cursor = 'move';
         else if (hit.mode === 'rotate') vp.style.cursor = 'grab';
         else if (hit.mode === 'move') vp.style.cursor = 'move';
-        else vp.style.cursor = 'nwse-resize';
+        else vp.style.cursor = handleCursor(hit.handle.id, 0);
       }
       return;
     }
@@ -1265,8 +1310,9 @@ export class MovePixelsTool extends Tool {
       if (hid.includes('n')) newTop += ldy;
       let newW = newRight - newLeft, newH = newBottom - newTop;
       // Shift: proportional resize anchored to opposite corner/edge
+      // Use proportions at drag start, not original buffer proportions
       if (e.shiftKey && this._bufferW > 0 && this._bufferH > 0) {
-        const aspect = this._bufferW / this._bufferH;
+        const aspect = (this._dragStartScaleX * this._bufferW) / (this._dragStartScaleY * this._bufferH);
         if (hid === 'n' || hid === 's') {
           newW = Math.abs(newH) * aspect;
           const anchorY = hid === 'n' ? newBottom : newTop;
@@ -1280,12 +1326,14 @@ export class MovePixelsTool extends Tool {
           if (hid === 'e') { newRight = anchorX + newW; newLeft = anchorX; }
           else { newLeft = anchorX - newW; newRight = anchorX; }
         } else {
-          // Corner: uniform scale, anchor opposite corner
-          const sx = Math.abs(newW) / this._bufferW;
-          const sy = Math.abs(newH) / this._bufferH;
+          // Corner: uniform scale relative to current size, anchor opposite corner
+          const curW = this._bufferW * this._dragStartScaleX;
+          const curH = this._bufferH * this._dragStartScaleY;
+          const sx = Math.abs(newW) / curW;
+          const sy = Math.abs(newH) / curH;
           const s = Math.max(sx, sy);
-          newW = this._bufferW * s * Math.sign(newW || 1);
-          newH = this._bufferH * s * Math.sign(newH || 1);
+          newW = curW * s * Math.sign(newW || 1);
+          newH = curH * s * Math.sign(newH || 1);
           // Anchor the opposite corner
           const anchorX = hid.includes('e') ? newLeft : newRight;
           const anchorY = hid.includes('s') ? newTop : newBottom;
@@ -1401,354 +1449,6 @@ export class MovePixelsTool extends Tool {
   }
 }
 
-// ===== Move Selection (toggle with M) =====
-
-export class MoveSelectionTool extends Tool {
-  constructor() {
-    super('MoveSelection', '');
-    this._active = false;
-    this._dragging = false;
-    this._dragMode = null;
-    this._dragHandle = null;
-    // Original selection snapshot
-    this._origMask = null;
-    this._origBounds = null;
-    this._origW = 0; this._origH = 0;
-    // Transform
-    this._tx = 0; this._ty = 0;
-    this._scaleX = 1; this._scaleY = 1;
-    this._rotation = 0;
-    // Drag start
-    this._dragStartX = 0; this._dragStartY = 0;
-    this._dragStartTx = 0; this._dragStartTy = 0;
-    this._dragStartScaleX = 0; this._dragStartScaleY = 0;
-    this._dragStartRotation = 0;
-    this._dragStartAngle = 0;
-  }
-
-  activate() { document.getElementById('viewport').style.cursor = 'move'; }
-  deactivate() {
-    document.getElementById('viewport').style.cursor = 'crosshair';
-    if (this._active) this.commit();
-  }
-
-  _getCorners() {
-    const hw = this._origW / 2 * this._scaleX;
-    const hh = this._origH / 2 * this._scaleY;
-    const cos = Math.cos(this._rotation), sin = Math.sin(this._rotation);
-    return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([lx, ly]) => ({
-      x: this._tx + lx * cos - ly * sin,
-      y: this._ty + lx * sin + ly * cos,
-    }));
-  }
-
-  _getHandles() {
-    const hw = this._origW / 2 * this._scaleX;
-    const hh = this._origH / 2 * this._scaleY;
-    const cos = Math.cos(this._rotation), sin = Math.sin(this._rotation);
-    const pts = [
-      { id: 'nw', lx: -hw, ly: -hh }, { id: 'n', lx: 0, ly: -hh },
-      { id: 'ne', lx: hw, ly: -hh },  { id: 'e', lx: hw, ly: 0 },
-      { id: 'se', lx: hw, ly: hh },   { id: 's', lx: 0, ly: hh },
-      { id: 'sw', lx: -hw, ly: hh },  { id: 'w', lx: -hw, ly: 0 },
-    ];
-    return pts.map(p => ({
-      id: p.id,
-      x: this._tx + p.lx * cos - p.ly * sin,
-      y: this._ty + p.lx * sin + p.ly * cos,
-    }));
-  }
-
-  _getRotationHandle(zoom) {
-    const hh = this._origH / 2 * this._scaleY;
-    const cos = Math.cos(this._rotation), sin = Math.sin(this._rotation);
-    const topX = this._tx + hh * sin;
-    const topY = this._ty - hh * cos;
-    const offset = 25 / zoom;
-    return { x: topX + sin * offset, y: topY - cos * offset };
-  }
-
-  _isInsideBounds(x, y) {
-    const dx = x - this._tx, dy = y - this._ty;
-    const cos = Math.cos(-this._rotation), sin = Math.sin(-this._rotation);
-    const lx = dx * cos - dy * sin, ly = dx * sin + dy * cos;
-    return Math.abs(lx) <= this._origW / 2 * this._scaleX &&
-           Math.abs(ly) <= this._origH / 2 * this._scaleY;
-  }
-
-  _hitTest(doc, x, y) {
-    const z = doc.zoom, threshold = 7;
-    const smx = x * z + doc.panX, smy = y * z + doc.panY;
-    const rh = this._getRotationHandle(z);
-    if (Math.hypot(smx - (rh.x * z + doc.panX), smy - (rh.y * z + doc.panY)) < threshold)
-      return { mode: 'rotate' };
-    for (const h of this._getHandles()) {
-      const sx = h.x * z + doc.panX, sy = h.y * z + doc.panY;
-      if (Math.abs(smx - sx) < threshold && Math.abs(smy - sy) < threshold)
-        return { mode: 'handle', handle: h };
-    }
-    if (this._isInsideBounds(x, y)) return { mode: 'move' };
-    return null;
-  }
-
-  _initFromSelection(doc) {
-    const sel = doc.selection;
-    if (!sel.active || !sel.bounds) return false;
-    this._origMask = sel.mask ? new Uint8Array(sel.mask) : null;
-    this._origBounds = { ...sel.bounds };
-    this._origW = sel.bounds.w; this._origH = sel.bounds.h;
-    this._tx = sel.bounds.x + sel.bounds.w / 2;
-    this._ty = sel.bounds.y + sel.bounds.h / 2;
-    this._scaleX = 1; this._scaleY = 1; this._rotation = 0;
-    this._active = true;
-    return true;
-  }
-
-  _applyTransformToSelection(doc) {
-    const sel = doc.selection;
-    const W = doc.width, H = doc.height;
-    const newMask = new Uint8Array(W * H);
-    const cos = Math.cos(-this._rotation), sin = Math.sin(-this._rotation);
-    const invSx = 1 / this._scaleX, invSy = 1 / this._scaleY;
-    const origCx = this._origBounds.x + this._origW / 2;
-    const origCy = this._origBounds.y + this._origH / 2;
-    // Compute AABB of transformed selection for iteration bounds
-    const corners = this._getCorners();
-    const xs = corners.map(c => c.x), ys = corners.map(c => c.y);
-    const minPx = Math.max(0, Math.floor(Math.min(...xs)) - 1);
-    const maxPx = Math.min(W - 1, Math.ceil(Math.max(...xs)) + 1);
-    const minPy = Math.max(0, Math.floor(Math.min(...ys)) - 1);
-    const maxPy = Math.min(H - 1, Math.ceil(Math.max(...ys)) + 1);
-    let bMinX = W, bMaxX = 0, bMinY = H, bMaxY = 0;
-    let found = false;
-    for (let py = minPy; py <= maxPy; py++) {
-      for (let px = minPx; px <= maxPx; px++) {
-        const dx = px - this._tx, dy = py - this._ty;
-        const rx = dx * cos - dy * sin, ry = dx * sin + dy * cos;
-        const origX = Math.round(rx * invSx + origCx);
-        const origY = Math.round(ry * invSy + origCy);
-        if (origX < this._origBounds.x || origX >= this._origBounds.x + this._origW ||
-            origY < this._origBounds.y || origY >= this._origBounds.y + this._origH) continue;
-        const selected = this._origMask
-          ? this._origMask[origY * W + origX] : true;
-        if (selected) {
-          newMask[py * W + px] = 1;
-          if (px < bMinX) bMinX = px; if (px > bMaxX) bMaxX = px;
-          if (py < bMinY) bMinY = py; if (py > bMaxY) bMaxY = py;
-          found = true;
-        }
-      }
-    }
-    if (found) {
-      sel.mask = newMask;
-      sel.bounds = { x: bMinX, y: bMinY, w: bMaxX - bMinX + 1, h: bMaxY - bMinY + 1 };
-      sel.active = true;
-    } else {
-      sel.clear();
-    }
-  }
-
-  commit() {
-    if (!this._active) return;
-    this._active = false;
-    bus.emit('canvas:dirty');
-  }
-
-  cancel() {
-    if (!this._active) return;
-    const doc = bus._app?.doc;
-    if (doc && doc.selection) {
-      if (this._origMask) {
-        doc.selection.mask = new Uint8Array(this._origMask);
-        doc.selection.bounds = { ...this._origBounds };
-        doc.selection.active = true;
-      } else {
-        doc.selection.setRect(this._origBounds.x, this._origBounds.y,
-          this._origBounds.w, this._origBounds.h);
-      }
-    }
-    this._active = false;
-    bus.emit('canvas:dirty');
-  }
-
-  /** Hit-test against selection bounds (before active) */
-  _hitTestSelection(doc, x, y) {
-    const sel = doc.selection;
-    if (!sel.active || !sel.bounds) return null;
-    const b = sel.bounds;
-    const z = doc.zoom, threshold = 7;
-    const smx = x * z + doc.panX, smy = y * z + doc.panY;
-    const topCx = b.x + b.w / 2, topCy = b.y;
-    const offset = 25 / z;
-    const rhx = topCx, rhy = topCy - offset;
-    if (Math.hypot(smx - (rhx * z + doc.panX), smy - (rhy * z + doc.panY)) < threshold)
-      return { mode: 'rotate' };
-    const handles = getHandles(b);
-    for (const h of handles) {
-      const sx = h.x * z + doc.panX, sy = h.y * z + doc.panY;
-      if (Math.abs(smx - sx) < threshold && Math.abs(smy - sy) < threshold)
-        return { mode: 'handle', handle: h };
-    }
-    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h)
-      return { mode: 'move' };
-    return null;
-  }
-
-  onPointerDown(doc, x, y, e) {
-    if (this._active) {
-      const hit = this._hitTest(doc, x, y);
-      if (hit) {
-        this._dragging = true;
-        this._dragMode = hit.mode;
-        this._dragHandle = hit.handle || null;
-        this._dragStartX = x; this._dragStartY = y;
-        this._dragStartTx = this._tx; this._dragStartTy = this._ty;
-        this._dragStartScaleX = this._scaleX; this._dragStartScaleY = this._scaleY;
-        this._dragStartRotation = this._rotation;
-        if (hit.mode === 'rotate') {
-          this._dragStartAngle = Math.atan2(y - this._ty, x - this._tx);
-        }
-        return;
-      }
-      this.commit();
-    }
-    // Check what was clicked on the preview handles before initializing
-    const previewHit = this._hitTestSelection(doc, x, y);
-    if (this._initFromSelection(doc)) {
-      this._dragging = true;
-      this._dragStartX = x; this._dragStartY = y;
-      this._dragStartTx = this._tx; this._dragStartTy = this._ty;
-      this._dragStartScaleX = this._scaleX; this._dragStartScaleY = this._scaleY;
-      this._dragStartRotation = this._rotation;
-      if (previewHit && previewHit.mode === 'handle') {
-        this._dragMode = 'handle';
-        this._dragHandle = previewHit.handle;
-      } else if (previewHit && previewHit.mode === 'rotate') {
-        this._dragMode = 'rotate';
-        this._dragHandle = null;
-        this._dragStartAngle = Math.atan2(y - this._ty, x - this._tx);
-      } else {
-        this._dragMode = 'move';
-        this._dragHandle = null;
-      }
-    }
-  }
-
-  onPointerMove(doc, x, y, e) {
-    if (!this._dragging) {
-      const vp = document.getElementById('viewport');
-      if (this._active) {
-        const hit = this._hitTest(doc, x, y);
-        if (!hit) vp.style.cursor = 'move';
-        else if (hit.mode === 'rotate') vp.style.cursor = 'grab';
-        else if (hit.mode === 'move') vp.style.cursor = 'move';
-        else vp.style.cursor = 'nwse-resize';
-      } else {
-        const hit = this._hitTestSelection(doc, x, y);
-        if (!hit) vp.style.cursor = 'move';
-        else if (hit.mode === 'rotate') vp.style.cursor = 'grab';
-        else if (hit.mode === 'move') vp.style.cursor = 'move';
-        else vp.style.cursor = 'nwse-resize';
-      }
-      return;
-    }
-    const mdx = x - this._dragStartX, mdy = y - this._dragStartY;
-    if (this._dragMode === 'move') {
-      let ox = mdx, oy = mdy;
-      if (e.shiftKey) {
-        const angle = Math.atan2(oy, ox);
-        const snap = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
-        const dist = Math.sqrt(ox * ox + oy * oy);
-        ox = dist * Math.cos(snap);
-        oy = dist * Math.sin(snap);
-      }
-      this._tx = this._dragStartTx + ox;
-      this._ty = this._dragStartTy + oy;
-    } else if (this._dragMode === 'rotate') {
-      const cur = Math.atan2(y - this._ty, x - this._tx);
-      this._rotation = this._dragStartRotation + (cur - this._dragStartAngle);
-      if (e.shiftKey) {
-        const snap = Math.PI / 12;
-        this._rotation = Math.round(this._rotation / snap) * snap;
-      }
-    } else if (this._dragMode === 'handle') {
-      const cos = Math.cos(this._rotation), sin = Math.sin(this._rotation);
-      const ldx = mdx * cos + mdy * sin, ldy = -mdx * sin + mdy * cos;
-      const hw = this._origW / 2 * this._dragStartScaleX;
-      const hh = this._origH / 2 * this._dragStartScaleY;
-      let newLeft = -hw, newRight = hw, newTop = -hh, newBottom = hh;
-      const hid = this._dragHandle.id;
-      if (hid.includes('e')) newRight += ldx;
-      if (hid.includes('w')) newLeft += ldx;
-      if (hid.includes('s')) newBottom += ldy;
-      if (hid.includes('n')) newTop += ldy;
-      let newW = newRight - newLeft, newH = newBottom - newTop;
-      this._scaleX = Math.max(0.01, Math.abs(newW) / this._origW);
-      this._scaleY = Math.max(0.01, Math.abs(newH) / this._origH);
-      const localCenterX = (newLeft + newRight) / 2, localCenterY = (newTop + newBottom) / 2;
-      this._tx = this._dragStartTx + localCenterX * cos - localCenterY * sin;
-      this._ty = this._dragStartTy + localCenterX * sin + localCenterY * cos;
-    }
-    this._applyTransformToSelection(doc);
-    bus.emit('canvas:dirty');
-  }
-
-  onPointerUp() {
-    if (!this._dragging) return;
-    this._dragging = false;
-    this._dragMode = null; this._dragHandle = null;
-    bus.emit('canvas:dirty');
-  }
-
-  onOverlay(ctx, doc) {
-    if (!this._active) {
-      // Preview: show handles around selection
-      const sel = doc.selection;
-      if (sel.active && sel.bounds) {
-        const z = doc.zoom;
-        drawHandles(ctx, doc, sel.bounds);
-        const b = sel.bounds;
-        const topCx = b.x + b.w / 2, topCy = b.y;
-        const offset = 25 / z;
-        const rhx = topCx * z + doc.panX, rhy = (topCy - offset) * z + doc.panY;
-        const thx = topCx * z + doc.panX, thy = topCy * z + doc.panY;
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(thx, thy); ctx.lineTo(rhx, rhy); ctx.stroke();
-        ctx.fillStyle = 'white'; ctx.strokeStyle = '#333';
-        ctx.beginPath(); ctx.arc(rhx, rhy, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-      }
-      return;
-    }
-    const z = doc.zoom;
-    // Bounding outline
-    const corners = this._getCorners();
-    const sc = corners.map(c => ({ x: c.x * z + doc.panX, y: c.y * z + doc.panY }));
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-    ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(sc[0].x, sc[0].y);
-    for (let i = 1; i < 4; i++) ctx.lineTo(sc[i].x, sc[i].y);
-    ctx.closePath(); ctx.stroke(); ctx.setLineDash([]);
-    // Handles
-    const handles = this._getHandles();
-    const hSize = 5;
-    ctx.fillStyle = 'white'; ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
-    for (const h of handles) {
-      const sx = Math.round(h.x * z + doc.panX), sy = Math.round(h.y * z + doc.panY);
-      ctx.fillRect(sx - hSize, sy - hSize, hSize * 2, hSize * 2);
-      ctx.strokeRect(sx - hSize, sy - hSize, hSize * 2, hSize * 2);
-    }
-    // Rotation handle
-    const rh = this._getRotationHandle(z);
-    const rhx = rh.x * z + doc.panX, rhy = rh.y * z + doc.panY;
-    const topH = handles.find(h => h.id === 'n');
-    const thx = topH.x * z + doc.panX, thy = topH.y * z + doc.panY;
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(thx, thy); ctx.lineTo(rhx, rhy); ctx.stroke();
-    ctx.fillStyle = 'white'; ctx.strokeStyle = '#333';
-    ctx.beginPath(); ctx.arc(rhx, rhy, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  }
-}
-
 // ===== Helper to reset layer ctx =====
 
 function layer_ctx_reset(layer) {
@@ -1771,7 +1471,7 @@ export class ToolManager {
       new FillTool(), new EyedropperTool(), new LineTool(),
       new RectangleTool(), new EllipseTool(), new TextTool(),
       new SelectRectTool(), new MagicWandTool(),
-      new MovePixelsTool(), new MoveSelectionTool(),
+      new MovePixelsTool(),
     ];
     for (const t of all) this.tools[t.name.toLowerCase()] = t;
 
@@ -1786,11 +1486,6 @@ export class ToolManager {
       // S cycles between selection tools
       if (key === 's' && (this._toolName === 'select' || this._toolName === 'wand')) {
         this.setTool(this._toolName === 'select' ? 'wand' : 'select');
-        return;
-      }
-      // M cycles between move tools
-      if (key === 'm' && (this._toolName === 'move' || this._toolName === 'moveselection')) {
-        this.setTool(this._toolName === 'move' ? 'moveselection' : 'move');
         return;
       }
       const name = this._keyMap[key];
@@ -1810,14 +1505,10 @@ export class ToolManager {
 
     // Update toolbox UI
     document.querySelectorAll('.tool-btn').forEach(btn => {
-      const btnTool = btn.dataset.tool;
-      const isActive = btnTool === name ||
-        (btnTool === 'move' && name === 'moveselection');
-      btn.classList.toggle('active', isActive);
+      btn.classList.toggle('active', btn.dataset.tool === name);
     });
-    const displayName = name === 'moveselection' ? 'Move Selection' :
-      (this.activeTool ? this.activeTool.name : '');
-    document.getElementById('status-tool').textContent = displayName;
+    document.getElementById('status-tool').textContent =
+      this.activeTool ? this.activeTool.name : '';
   }
 
   getOptions() {
