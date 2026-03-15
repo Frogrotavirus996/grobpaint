@@ -545,9 +545,8 @@ class App {
     let px, py;
     const sel = doc.selection;
     if (sel.active && sel.bounds) {
-      // Offset from current selection position
-      px = sel.bounds.x + 10;
-      py = sel.bounds.y + 10;
+      px = sel.bounds.x;
+      py = sel.bounds.y;
     } else {
       // Center in viewport
       const vp = document.getElementById('viewport').getBoundingClientRect();

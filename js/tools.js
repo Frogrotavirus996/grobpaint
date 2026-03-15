@@ -227,6 +227,59 @@ function applyHandleDrag(handleId, origBounds, dx, dy) {
   return { x, y, w: Math.max(1, w), h: Math.max(1, h) };
 }
 
+/** Draw a pixel-accurate brush cursor on the overlay.
+ *  Shows the exact pixels that would be painted, outlined in white+black for visibility. */
+function drawBrushCursor(ctx, doc, screenX, screenY) {
+  const z = doc.zoom;
+  const { x: docX, y: docY } = doc.screenToDoc(screenX, screenY);
+  const cx = Math.floor(docX), cy = Math.floor(docY);
+  const size = bus._brushSize;
+  const rad = size / 2;
+  const ri = Math.ceil(rad);
+
+  // Build a set of filled pixels
+  const pixels = [];
+  for (let dy = -ri; dy <= ri; dy++) {
+    for (let dx = -ri; dx <= ri; dx++) {
+      if (bus._antiAlias || dx * dx + dy * dy <= rad * rad) {
+        // For AA mode, approximate the circle with same pixel test
+        if (!bus._antiAlias || dx * dx + dy * dy <= rad * rad) {
+          pixels.push(cx + dx, cy + dy);
+        }
+      }
+    }
+  }
+
+  // Build outline: for each pixel, draw edges that border a non-filled pixel
+  const filled = new Set();
+  for (let i = 0; i < pixels.length; i += 2) {
+    filled.add(pixels[i] + ',' + pixels[i + 1]);
+  }
+
+  ctx.beginPath();
+  for (let i = 0; i < pixels.length; i += 2) {
+    const px = pixels[i], py = pixels[i + 1];
+    const sx = px * z + doc.panX, sy = py * z + doc.panY;
+    // Top edge
+    if (!filled.has(px + ',' + (py - 1))) { ctx.moveTo(sx, sy); ctx.lineTo(sx + z, sy); }
+    // Bottom edge
+    if (!filled.has(px + ',' + (py + 1))) { ctx.moveTo(sx, sy + z); ctx.lineTo(sx + z, sy + z); }
+    // Left edge
+    if (!filled.has((px - 1) + ',' + py)) { ctx.moveTo(sx, sy); ctx.lineTo(sx, sy + z); }
+    // Right edge
+    if (!filled.has((px + 1) + ',' + py)) { ctx.moveTo(sx + z, sy); ctx.lineTo(sx + z, sy + z); }
+  }
+
+  // Draw twice: black then white offset for visibility on any background
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+  ctx.setLineDash([2, 2]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
 /** Get the CSS resize cursor for a handle ID, accounting for rotation */
 function handleCursor(id, rotation) {
   // Base angles for each handle (degrees from north, clockwise)
@@ -383,19 +436,11 @@ export class BrushTool extends Tool {
 
   onOverlay(ctx, doc) {
     if (!this._drawing) {
-      // Show brush cursor preview
       const vp = document.getElementById('viewport');
       const r = vp.getBoundingClientRect();
       const mx = bus._mouseX - r.left;
       const my = bus._mouseY - r.top;
-      if (mx >= 0 && my >= 0) {
-        const size = bus._brushSize * doc.zoom;
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(mx, my, size / 2, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+      if (mx >= 0 && my >= 0) drawBrushCursor(ctx, doc, mx, my);
     }
   }
 }
@@ -475,14 +520,7 @@ export class EraserTool extends Tool {
     const r = vp.getBoundingClientRect();
     const mx = bus._mouseX - r.left;
     const my = bus._mouseY - r.top;
-    if (mx >= 0 && my >= 0) {
-      const size = bus._brushSize * doc.zoom;
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(mx, my, size / 2, 0, Math.PI * 2);
-      ctx.stroke();
-    }
+    if (mx >= 0 && my >= 0) drawBrushCursor(ctx, doc, mx, my);
   }
 }
 
@@ -1303,8 +1341,8 @@ export class MovePixelsTool extends Tool {
         ox = dist * Math.cos(snap);
         oy = dist * Math.sin(snap);
       }
-      this._tx = this._dragStartTx + ox;
-      this._ty = this._dragStartTy + oy;
+      this._tx = Math.round(this._dragStartTx + ox);
+      this._ty = Math.round(this._dragStartTy + oy);
     } else if (this._dragMode === 'rotate') {
       const cur = Math.atan2(y - this._ty, x - this._tx);
       this._rotation = this._dragStartRotation + (cur - this._dragStartAngle);
