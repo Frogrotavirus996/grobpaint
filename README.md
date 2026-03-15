@@ -95,16 +95,17 @@ layers/
 
 ## Architecture
 
-The app is ~2500 lines of vanilla JavaScript split across four modules:
+The app is ~5000 lines of vanilla JavaScript split across five modules:
 
 | File | Role |
 |---|---|
-| `js/core.js` | EventBus, Layer, History (swap-based undo/redo), PaintDocument, Selection |
+| `js/core.js` | EventBus, Layer, History (swap-based undo/redo), PaintDocument, Selection with contour tracing |
 | `js/renderer.js` | Compositing engine, checkerboard background, zoom/pan, grid overlay |
-| `js/tools.js` | All tools, flood fill, flood select, Bresenham line |
-| `js/ui.js` | Color system, HSV picker, layers panel, document tabs, menus, dialogs |
-| `js/app.js` | App init, canvas events, keyboard shortcuts, file I/O |
+| `js/tools.js` | All tools, flood fill, flood select, lasso, Bresenham line |
+| `js/ui.js` | Color system, HSV picker, layers panel, document tabs, menus, dialogs, image adjustments |
+| `js/app.js` | App init, canvas events, keyboard shortcuts, file I/O, clipboard |
 | `grobpaint.py` | Python HTTP server + pywebview launcher, native file dialogs |
+| `sw.js` | Service worker for PWA offline support |
 
 No frameworks, no dependencies beyond one CDN include (JSZip for browser-side `.gbp` support).
 
