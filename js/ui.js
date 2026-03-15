@@ -303,14 +303,14 @@ export class LayersPanel {
   _initButtons() {
     document.getElementById('btn-layer-add').addEventListener('click', () => {
       if (!this.doc) return;
-      this.doc.saveStructureState();
+      this.doc.saveStructureState('Add Layer');
       this.doc.addLayer();
       bus.emit('layers:changed');
       bus.emit('canvas:dirty');
     });
     document.getElementById('btn-layer-delete').addEventListener('click', () => {
       if (!this.doc || this.doc.layers.length <= 1) return;
-      this.doc.saveStructureState();
+      this.doc.saveStructureState('Delete Layer');
       this.doc.removeLayer();
       bus.emit('layers:changed');
       bus.emit('canvas:dirty');
@@ -319,7 +319,7 @@ export class LayersPanel {
       if (!this.doc) return;
       const i = this.doc.activeLayerIndex;
       if (i >= this.doc.layers.length - 1) return;
-      this.doc.saveStructureState();
+      this.doc.saveStructureState('Move Layer Up');
       this.doc.moveLayer(i, i + 1);
       bus.emit('layers:changed');
       bus.emit('canvas:dirty');
@@ -328,14 +328,14 @@ export class LayersPanel {
       if (!this.doc) return;
       const i = this.doc.activeLayerIndex;
       if (i <= 0) return;
-      this.doc.saveStructureState();
+      this.doc.saveStructureState('Move Layer Down');
       this.doc.moveLayer(i, i - 1);
       bus.emit('layers:changed');
       bus.emit('canvas:dirty');
     });
     document.getElementById('btn-layer-duplicate').addEventListener('click', () => {
       if (!this.doc) return;
-      this.doc.saveStructureState();
+      this.doc.saveStructureState('Duplicate Layer');
       this.doc.duplicateLayer();
       bus.emit('layers:changed');
       bus.emit('canvas:dirty');
@@ -343,7 +343,7 @@ export class LayersPanel {
     document.getElementById('btn-layer-merge').addEventListener('click', () => {
       if (!this.doc) return;
       if (this.doc.activeLayerIndex <= 0) return;
-      this.doc.saveStructureState();
+      this.doc.saveStructureState('Merge Down');
       this.doc.mergeDown();
       bus.emit('layers:changed');
       bus.emit('canvas:dirty');
@@ -476,9 +476,9 @@ export class HistoryPanel {
     for (let i = 0; i < h.states.length; i++) {
       const entry = document.createElement('div');
       const state = h.states[i];
-      const label = state.type === 'draw' ? 'Draw' :
+      const label = state.label || (state.type === 'draw' ? 'Draw' :
                     state.type === 'structure' ? 'Structure' :
-                    state.type === 'selection' ? 'Selection' : state.type;
+                    state.type === 'selection' ? 'Selection' : state.type);
       entry.className = 'history-item' + (i === h.index ? ' active' : '') + (i > h.index ? ' future' : '');
       entry.textContent = label;
       entry.addEventListener('click', () => {
@@ -767,6 +767,7 @@ export class ToolOptionsBar {
     bus._fontFamily = 'Arial';
     bus._interpolation = 'nearest';
     bus._wandGlobal = false;
+    bus._fillGlobal = false;
 
     bus.on('tool:changed', name => this.render(name));
     this.render('pencil');
@@ -814,16 +815,20 @@ export class ToolOptionsBar {
         })));
     }
 
-    // Wand mode (contiguous / global)
-    if (toolName === 'wand') {
+    // Mode (contiguous / global) for fill and wand
+    if (toolName === 'wand' || toolName === 'fill') {
+      const globalProp = toolName === 'wand' ? '_wandGlobal' : '_fillGlobal';
       const modeSelect = document.createElement('select');
       for (const [val, label] of [['local', 'Contiguous'], ['global', 'Global']]) {
         const opt = document.createElement('option');
         opt.value = val; opt.textContent = label;
-        if ((val === 'global') === bus._wandGlobal) opt.selected = true;
+        if ((val === 'global') === bus[globalProp]) opt.selected = true;
         modeSelect.appendChild(opt);
       }
-      modeSelect.addEventListener('change', () => bus._wandGlobal = modeSelect.value === 'global');
+      modeSelect.addEventListener('change', () => {
+        bus[globalProp] = modeSelect.value === 'global';
+        if (toolName === 'wand') bus.emit('wand:reselect');
+      });
       bar.appendChild(this._group('Mode:', modeSelect));
     }
 
@@ -1136,7 +1141,7 @@ export class CanvasSizeDialog {
     if (row === 'm') oy = Math.floor(dh / 2);
     else if (row === 'b') oy = dh;
 
-    doc.saveStructureState();
+    doc.saveStructureState('Canvas Size');
     doc.resizeCanvas(newW, newH, ox, oy);
     bus.emit('layers:changed');
     bus.emit('canvas:dirty');
@@ -1199,7 +1204,7 @@ export class ScaleImageDialog {
     if (newW === doc.width && newH === doc.height) { this.hide(); return; }
     const interp = document.getElementById('si-interpolation').value;
 
-    doc.saveStructureState();
+    doc.saveStructureState('Scale Image');
     doc.scaleImage(newW, newH, interp);
     bus.emit('layers:changed');
     bus.emit('canvas:dirty');
@@ -1240,11 +1245,11 @@ class AdjustmentDialog {
     this._overlayId = overlayId;
   }
 
-  show(doc) {
+  show(doc, historyLabel) {
     if (!doc || !doc.activeLayer) return;
     this._doc = doc;
     this._layerIndex = doc.activeLayerIndex;
-    doc.saveDrawState(this._layerIndex);
+    doc.saveDrawState(this._layerIndex, historyLabel || 'Adjustment');
     this._savedImageData = doc.layers[this._layerIndex].getSnapshot();
     this._resetSliders();
     document.getElementById(this._overlayId).classList.remove('hidden');

@@ -81,6 +81,28 @@ export function floodFill(imageData, startX, startY, fillR, fillG, fillB, fillA,
   return imageData;
 }
 
+/** Global fill — fills ALL pixels matching target color, not just connected */
+export function globalFill(imageData, startX, startY, fillR, fillG, fillB, fillA, tolerance, selMask) {
+  const { width, height, data } = imageData;
+  startX = Math.round(startX);
+  startY = Math.round(startY);
+  if (startX < 0 || startX >= width || startY < 0 || startY >= height) return imageData;
+  const si = (startY * width + startX) * 4;
+  const sr = data[si], sg = data[si + 1], sb = data[si + 2], sa = data[si + 3];
+  const tol = tolerance * 4;
+  for (let i = 0; i < width * height; i++) {
+    if (selMask && !selMask[i]) continue;
+    const pi = i * 4;
+    const diff = Math.abs(data[pi] - sr) + Math.abs(data[pi + 1] - sg)
+               + Math.abs(data[pi + 2] - sb) + Math.abs(data[pi + 3] - sa);
+    if (diff <= tol) {
+      data[pi] = fillR; data[pi + 1] = fillG;
+      data[pi + 2] = fillB; data[pi + 3] = fillA;
+    }
+  }
+  return imageData;
+}
+
 /** Flood select — returns { mask, bounds } */
 export function floodSelect(imageData, startX, startY, tolerance) {
   const { width, height, data } = imageData;
@@ -322,7 +344,7 @@ export class PencilTool extends Tool {
   onPointerDown(doc, x, y, e) {
     const layer = doc.activeLayer;
     if (!layer || !layer.visible) return;
-    doc.saveDrawState();
+    doc.saveDrawState('Pencil');
     this._drawing = true;
     this._button = e.button;
     this._lastX = Math.floor(x);
@@ -376,7 +398,7 @@ export class BrushTool extends Tool {
   onPointerDown(doc, x, y, e) {
     const layer = doc.activeLayer;
     if (!layer || !layer.visible) return;
-    doc.saveDrawState();
+    doc.saveDrawState('Brush');
     this._drawing = true;
     this._button = e.button;
     this._lastX = x;
@@ -459,7 +481,7 @@ export class EraserTool extends Tool {
   onPointerDown(doc, x, y, e) {
     const layer = doc.activeLayer;
     if (!layer || !layer.visible) return;
-    doc.saveDrawState();
+    doc.saveDrawState('Eraser');
     this._drawing = true;
     this._lastX = x;
     this._lastY = y;
@@ -537,13 +559,14 @@ export class FillTool extends Tool {
     const fx = Math.floor(x), fy = Math.floor(y);
     // If selection active and click is outside it, do nothing
     if (doc.selection.active && !doc.selection.isSelected(fx, fy)) return;
-    doc.saveDrawState();
+    doc.saveDrawState('Fill');
     const color = e.button === 2 ? bus._secondaryColor : bus._primaryColor;
     const { r, g, b } = parseColor(color);
     const a = Math.round(bus._brushAlpha * 255);
     const imageData = layer.ctx.getImageData(0, 0, doc.width, doc.height);
     const selMask = doc.selection.active ? doc.selection.mask : null;
-    floodFill(imageData, fx, fy, r, g, b, a, bus._tolerance, selMask);
+    const fillFn = bus._fillGlobal ? globalFill : floodFill;
+    fillFn(imageData, fx, fy, r, g, b, a, bus._tolerance, selMask);
     layer.ctx.putImageData(imageData, 0, 0);
     bus.emit('canvas:dirty');
   }
@@ -598,7 +621,7 @@ export class LineTool extends Tool {
     this._startX = x; this._startY = y;
     this._endX = x; this._endY = y;
     this._button = e.button;
-    doc.saveDrawState();
+    doc.saveDrawState('Line');
   }
 
   onPointerMove(doc, x, y, e) {
@@ -693,7 +716,7 @@ export class RectangleTool extends Tool {
     this._startX = x; this._startY = y;
     this._endX = x; this._endY = y;
     this._button = e.button;
-    doc.saveDrawState();
+    doc.saveDrawState('Rectangle');
   }
 
   onPointerMove(doc, x, y, e) {
@@ -784,7 +807,7 @@ export class EllipseTool extends Tool {
     this._startX = x; this._startY = y;
     this._endX = x; this._endY = y;
     this._button = e.button;
-    doc.saveDrawState();
+    doc.saveDrawState('Ellipse');
   }
 
   onPointerMove(doc, x, y, e) {
@@ -876,7 +899,7 @@ export class TextTool extends Tool {
     this._active = true;
     this._doc = doc;
     this._button = e.button;
-    doc.saveDrawState();
+    doc.saveDrawState('Text');
 
     const container = document.getElementById('text-input-container');
     const input = document.getElementById('text-input');
@@ -943,7 +966,7 @@ export class SelectRectTool extends Tool {
     // Check if clicking on a handle first
     const handle = doc.selection.active ? hitHandle(doc, doc.selection.bounds, x, y) : null;
     if (handle) {
-      doc.saveSelectionState();
+      doc.saveSelectionState('Resize Selection');
       this._resizing = true;
       this._handle = handle;
       // Save original bounds for resize calculation
@@ -955,7 +978,7 @@ export class SelectRectTool extends Tool {
     }
 
     // Otherwise start a new selection
-    doc.saveSelectionState();
+    doc.saveSelectionState('Rectangle Select');
     this._drawing = true;
     this._startX = x; this._startY = y;
     this._endX = x; this._endY = y;
@@ -1041,7 +1064,7 @@ export class MagicWandTool extends Tool {
   }
 
   onPointerDown(doc, x, y, e) {
-    doc.saveSelectionState();
+    doc.saveSelectionState('Magic Wand');
     doc.compositeAll();
     this._imageData = doc.compositeCtx.getImageData(0, 0, doc.width, doc.height);
     this._lastX = Math.floor(x);
@@ -1081,7 +1104,7 @@ export class LassoTool extends Tool {
   }
 
   onPointerDown(doc, x, y, e) {
-    doc.saveSelectionState();
+    doc.saveSelectionState('Lasso Select');
     this._drawing = true;
     this._points = [{ x: Math.floor(x), y: Math.floor(y) }];
   }
@@ -1255,7 +1278,7 @@ export class MovePixelsTool extends Tool {
   _cutContent(doc) {
     const layer = doc.activeLayer;
     if (!layer || !layer.visible) return false;
-    doc.saveDrawState();
+    doc.saveDrawState('Move');
     const sel = doc.selection;
     let sx, sy, sw, sh;
 

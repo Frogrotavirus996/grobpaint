@@ -564,11 +564,11 @@ class App {
     const needW = Math.max(doc.width, px + pw);
     const needH = Math.max(doc.height, py + ph);
     if (needW > doc.width || needH > doc.height) {
-      doc.saveStructureState();
+      doc.saveStructureState('Paste');
       doc.resizeCanvas(needW, needH, 0, 0);
       document.getElementById('status-size').textContent = `${doc.width} x ${doc.height}`;
     } else {
-      doc.saveStructureState();
+      doc.saveStructureState('Paste');
     }
 
     // Create new layer above current and draw at position
@@ -676,14 +676,14 @@ class App {
 
   selectAll() {
     if (!this.doc) return;
-    this.doc.saveSelectionState();
+    this.doc.saveSelectionState('Select All');
     this.doc.selection.setRect(0, 0, this.doc.width, this.doc.height);
     bus.emit('canvas:dirty');
   }
 
   deselect() {
     if (!this.doc) return;
-    this.doc.saveSelectionState();
+    this.doc.saveSelectionState('Deselect');
     this.doc.selection.clear();
     bus.emit('canvas:dirty');
   }
@@ -749,7 +749,7 @@ class App {
   _deleteSelection() {
     const doc = this.doc;
     if (!doc || !doc.selection.active) return;
-    doc.saveDrawState();
+    doc.saveDrawState('Delete Selection');
     const layer = doc.activeLayer;
     const sel = doc.selection;
     if (sel.bounds) {
@@ -778,7 +778,7 @@ class App {
   flattenImage() {
     const doc = this.doc;
     if (!doc || doc.layers.length <= 1) return;
-    doc.saveStructureState();
+    doc.saveStructureState('Flatten');
     doc.compositeAll();
     // Replace all layers with single flattened layer
     const layer = doc.layers[0];
@@ -805,7 +805,7 @@ class App {
     const frameCount = Math.floor(doc.width / frameSize);
     if (frameCount <= 1) return; // nothing to split
 
-    doc.saveStructureState();
+    doc.saveStructureState('Split Sprite Sheet');
 
     // Extract each frame into a new layer
     const srcIdx = doc.activeLayerIndex;
@@ -899,7 +899,7 @@ class App {
   cropToSelection() {
     const doc = this.doc;
     if (!doc || !doc.selection.active || !doc.selection.bounds) return;
-    doc.saveStructureState();
+    doc.saveStructureState('Crop to Selection');
     doc.cropToSelection();
     bus.emit('layers:changed');
     bus.emit('canvas:dirty');
@@ -915,10 +915,10 @@ class App {
     this.scaleImageDialog.show(this.doc);
   }
 
-  showBrightnessContrast() { if (this.doc) this.bcDialog.show(this.doc); }
-  showHSLAdjust() { if (this.doc) this.hslDialog.show(this.doc); }
-  showGaussianBlur() { if (this.doc) this.blurDialog.show(this.doc); }
-  showSharpen() { if (this.doc) this.sharpenDialog.show(this.doc); }
+  showBrightnessContrast() { if (this.doc) this.bcDialog.show(this.doc, 'Brightness/Contrast'); }
+  showHSLAdjust() { if (this.doc) this.hslDialog.show(this.doc, 'Hue/Saturation'); }
+  showGaussianBlur() { if (this.doc) this.blurDialog.show(this.doc, 'Gaussian Blur'); }
+  showSharpen() { if (this.doc) this.sharpenDialog.show(this.doc, 'Sharpen'); }
 
   showCanvasSizeDialog() {
     if (!this.doc) return;
@@ -976,7 +976,7 @@ class App {
     if (!doc) return;
     const layer = doc.activeLayer;
     if (!layer || !layer.visible) return;
-    doc.saveDrawState();
+    doc.saveDrawState('Flip Horizontal');
     const sel = doc.selection;
     if (sel.active && sel.bounds) {
       const { x, y, w, h } = sel.bounds;
@@ -1009,7 +1009,7 @@ class App {
     if (!doc) return;
     const layer = doc.activeLayer;
     if (!layer || !layer.visible) return;
-    doc.saveDrawState();
+    doc.saveDrawState('Flip Vertical');
     const sel = doc.selection;
     if (sel.active && sel.bounds) {
       const { x, y, w, h } = sel.bounds;

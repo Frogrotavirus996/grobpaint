@@ -454,10 +454,17 @@ export class PaintDocument {
   }
 
   /** Save state for undo before a draw operation */
-  saveDrawState(layerIndex) {
-    const idx = layerIndex !== undefined ? layerIndex : this.activeLayerIndex;
+  saveDrawState(layerIndexOrLabel, label) {
+    let idx;
+    if (typeof layerIndexOrLabel === 'string') {
+      label = layerIndexOrLabel;
+      idx = this.activeLayerIndex;
+    } else {
+      idx = layerIndexOrLabel !== undefined ? layerIndexOrLabel : this.activeLayerIndex;
+    }
     this.history.push({
       type: 'draw',
+      label: label || 'Draw',
       layerIndex: idx,
       imageData: this.layers[idx].getSnapshot(),
     });
@@ -465,9 +472,10 @@ export class PaintDocument {
   }
 
   /** Save selection state for undo */
-  saveSelectionState() {
+  saveSelectionState(label) {
     this.history.push({
       type: 'selection',
+      label: label || 'Selection',
       mask: this.selection.mask ? new Uint8Array(this.selection.mask) : null,
       bounds: this.selection.bounds ? { ...this.selection.bounds } : null,
       active: this.selection.active,
@@ -475,9 +483,10 @@ export class PaintDocument {
   }
 
   /** Save full structure state for undo (add/delete/reorder layers) */
-  saveStructureState() {
+  saveStructureState(label) {
     this.history.push({
       type: 'structure',
+      label: label || 'Structure',
       width: this.width,
       height: this.height,
       layerCount: this.layers.length,

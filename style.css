@@ -277,13 +277,16 @@ body {
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 /* Color Section */
 #color-section {
   padding: 10px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-y: auto;
+  max-height: 50%;
 }
 
 #color-swatches {
@@ -453,7 +456,8 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  min-height: 80px;
+  overflow: hidden;
 }
 #layers-header {
   display: flex;
