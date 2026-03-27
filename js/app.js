@@ -3,7 +3,7 @@
 import { bus, Selection } from './core.js';
 import { Renderer } from './renderer.js';
 import { ToolManager } from './tools.js';
-import { ColorSystem, LayersPanel, HistoryPanel, DocManager, ToolOptionsBar, MenuBar, NewImageDialog, CanvasSizeDialog, ScaleImageDialog, BrightnessContrastDialog, HSLAdjustDialog, GaussianBlurDialog, SharpenDialog } from './ui.js';
+import { ColorSystem, LayersPanel, HistoryPanel, DocManager, ToolOptionsBar, MenuBar, NewImageDialog, CanvasSizeDialog, ScaleImageDialog, BrightnessContrastDialog, HSLAdjustDialog, GaussianBlurDialog, SharpenDialog, PosterizeDialog, ThresholdDialog } from './ui.js';
 
 class App {
   constructor() {
@@ -30,6 +30,8 @@ class App {
     this.hslDialog = new HSLAdjustDialog();
     this.blurDialog = new GaussianBlurDialog();
     this.sharpenDialog = new SharpenDialog();
+    this.posterizeDialog = new PosterizeDialog();
+    this.thresholdDialog = new ThresholdDialog();
 
     // Restore from localStorage or create initial document
     if (!this.docManager.restoreFromStorage()) {
@@ -52,9 +54,12 @@ class App {
       if (this.doc) this.fitInView();
     });
 
-    // Flip events
+    // Flip/rotate events
     bus.on('flip:horizontal', () => this.flipHorizontal());
     bus.on('flip:vertical', () => this.flipVertical());
+    bus.on('rotate:cw', () => this.rotateCW());
+    bus.on('rotate:ccw', () => this.rotateCCW());
+    bus.on('rotate:180', () => this.rotate180());
 
     // Context menu prevention
     document.addEventListener('contextmenu', e => {
@@ -1041,6 +1046,217 @@ class App {
     bus.emit('canvas:dirty');
   }
 
+  // ===== Rotation =====
+
+  rotateCW() { this._rotate(90); }
+  rotateCCW() { this._rotate(-90); }
+  rotate180() { this._rotate(180); }
+
+  _rotate(degrees) {
+    const doc = this.doc;
+    if (!doc) return;
+    const sel = doc.selection;
+    if (sel.active && sel.bounds) {
+      // Rotate within selection bounds
+      const layer = doc.activeLayer;
+      if (!layer || !layer.visible) return;
+      doc.saveDrawState('Rotate ' + degrees + '°');
+      const { x, y, w, h } = sel.bounds;
+      const temp = document.createElement('canvas');
+      temp.width = w; temp.height = h;
+      const tctx = temp.getContext('2d');
+      tctx.drawImage(layer.canvas, x, y, w, h, 0, 0, w, h);
+      const isSquare = w === h;
+      const rw = (degrees === 180 || isSquare) ? w : h;
+      const rh = (degrees === 180 || isSquare) ? h : w;
+      const rot = document.createElement('canvas');
+      rot.width = rw; rot.height = rh;
+      const rctx = rot.getContext('2d');
+      rctx.translate(rw / 2, rh / 2);
+      rctx.rotate(degrees * Math.PI / 180);
+      rctx.drawImage(temp, -w / 2, -h / 2);
+      layer.ctx.clearRect(x, y, w, h);
+      layer.ctx.drawImage(rot, x, y);
+      bus.emit('canvas:dirty');
+    } else {
+      // Rotate entire image (all layers) — may change document dimensions
+      const swapDims = (degrees === 90 || degrees === -90);
+      const newW = swapDims ? doc.height : doc.width;
+      const newH = swapDims ? doc.width : doc.height;
+      doc.saveStructureState('Rotate ' + degrees + '°');
+      for (const layer of doc.layers) {
+        const temp = document.createElement('canvas');
+        temp.width = layer.canvas.width; temp.height = layer.canvas.height;
+        temp.getContext('2d').drawImage(layer.canvas, 0, 0);
+        layer.canvas.width = newW;
+        layer.canvas.height = newH;
+        layer.ctx.translate(newW / 2, newH / 2);
+        layer.ctx.rotate(degrees * Math.PI / 180);
+        layer.ctx.drawImage(temp, -temp.width / 2, -temp.height / 2);
+        layer.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      }
+      doc.width = newW;
+      doc.height = newH;
+      doc.composite.width = newW;
+      doc.composite.height = newH;
+      doc.selection = new Selection(newW, newH);
+      bus.emit('layers:changed');
+      bus.emit('canvas:dirty');
+      document.getElementById('status-size').textContent = `${newW} x ${newH}`;
+      const vp = document.getElementById('viewport').getBoundingClientRect();
+      doc.fitInView(vp.width, vp.height);
+      this._syncZoomUI();
+    }
+  }
+
+  // ===== Quick Adjustments (no dialog) =====
+
+  invertColors() {
+    const doc = this.doc;
+    if (!doc) return;
+    const layer = doc.activeLayer;
+    if (!layer || !layer.visible) return;
+    doc.saveDrawState('Invert Colors');
+    const imageData = layer.ctx.getImageData(0, 0, doc.width, doc.height);
+    const d = imageData.data;
+    const mask = doc.selection.active ? doc.selection.mask : null;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 0) continue;
+      if (mask && !mask[i / 4]) continue;
+      d[i] = 255 - d[i];
+      d[i + 1] = 255 - d[i + 1];
+      d[i + 2] = 255 - d[i + 2];
+    }
+    layer.ctx.putImageData(imageData, 0, 0);
+    bus.emit('canvas:dirty');
+  }
+
+  desaturate() {
+    const doc = this.doc;
+    if (!doc) return;
+    const layer = doc.activeLayer;
+    if (!layer || !layer.visible) return;
+    doc.saveDrawState('Desaturate');
+    const imageData = layer.ctx.getImageData(0, 0, doc.width, doc.height);
+    const d = imageData.data;
+    const mask = doc.selection.active ? doc.selection.mask : null;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 0) continue;
+      if (mask && !mask[i / 4]) continue;
+      const gray = Math.round(d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114);
+      d[i] = gray; d[i + 1] = gray; d[i + 2] = gray;
+    }
+    layer.ctx.putImageData(imageData, 0, 0);
+    bus.emit('canvas:dirty');
+  }
+
+  posterize(levels = 4) {
+    const doc = this.doc;
+    if (!doc) return;
+    const layer = doc.activeLayer;
+    if (!layer || !layer.visible) return;
+    doc.saveDrawState('Posterize');
+    const imageData = layer.ctx.getImageData(0, 0, doc.width, doc.height);
+    const d = imageData.data;
+    const mask = doc.selection.active ? doc.selection.mask : null;
+    const step = 255 / (levels - 1);
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 0) continue;
+      if (mask && !mask[i / 4]) continue;
+      d[i] = Math.round(Math.round(d[i] / step) * step);
+      d[i + 1] = Math.round(Math.round(d[i + 1] / step) * step);
+      d[i + 2] = Math.round(Math.round(d[i + 2] / step) * step);
+    }
+    layer.ctx.putImageData(imageData, 0, 0);
+    bus.emit('canvas:dirty');
+  }
+
+  threshold(level = 128) {
+    const doc = this.doc;
+    if (!doc) return;
+    const layer = doc.activeLayer;
+    if (!layer || !layer.visible) return;
+    doc.saveDrawState('Threshold');
+    const imageData = layer.ctx.getImageData(0, 0, doc.width, doc.height);
+    const d = imageData.data;
+    const mask = doc.selection.active ? doc.selection.mask : null;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 0) continue;
+      if (mask && !mask[i / 4]) continue;
+      const gray = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+      const val = gray >= level ? 255 : 0;
+      d[i] = val; d[i + 1] = val; d[i + 2] = val;
+    }
+    layer.ctx.putImageData(imageData, 0, 0);
+    bus.emit('canvas:dirty');
+  }
+
+  // ===== Selection operations =====
+
+  invertSelection() {
+    const doc = this.doc;
+    if (!doc) return;
+    const sel = doc.selection;
+    if (!sel.active) return;
+    doc.saveSelectionState('Invert Selection');
+    const mask = new Uint8Array(doc.width * doc.height);
+    for (let i = 0; i < mask.length; i++) {
+      mask[i] = sel.mask ? (sel.mask[i] ? 0 : 1) : 0;
+    }
+    // Compute bounds of inverted selection
+    let minX = doc.width, minY = doc.height, maxX = 0, maxY = 0;
+    for (let y = 0; y < doc.height; y++) {
+      for (let x = 0; x < doc.width; x++) {
+        if (mask[y * doc.width + x]) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < minX) { sel.clear(); }
+    else { sel.setMask(mask, { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 }); }
+    bus.emit('canvas:dirty');
+  }
+
+  strokeSelection() {
+    const doc = this.doc;
+    if (!doc || !doc.selection.active || !doc.selection.bounds) return;
+    const layer = doc.activeLayer;
+    if (!layer || !layer.visible) return;
+    doc.saveDrawState('Stroke Selection');
+    const sel = doc.selection;
+    const { x, y, w, h } = sel.bounds;
+    const size = bus._brushSize || 1;
+    const [r, g, b] = bus._primaryColor || [0, 0, 0];
+    const a = (bus._brushAlpha !== undefined ? bus._brushAlpha : 255) / 255;
+    layer.ctx.save();
+    layer.ctx.strokeStyle = `rgba(${r},${g},${b},${a})`;
+    layer.ctx.lineWidth = size;
+    if (sel._contours) {
+      // Non-rectangular: stroke the contour paths
+      layer.ctx.beginPath();
+      for (const path of sel._contours) {
+        layer.ctx.moveTo(path[0].x, path[0].y);
+        for (let i = 1; i < path.length; i++) {
+          layer.ctx.lineTo(path[i].x, path[i].y);
+        }
+      }
+      layer.ctx.stroke();
+    } else {
+      // Rectangular: stroke the rect
+      layer.ctx.strokeRect(x + size / 2, y + size / 2, w - size, h - size);
+    }
+    layer.ctx.restore();
+    bus.emit('canvas:dirty');
+  }
+
+  // ===== Posterize/Threshold Dialogs =====
+
+  showPosterize() { if (this.doc) this.posterizeDialog.show(this.doc, 'Posterize'); }
+  showThreshold() { if (this.doc) this.thresholdDialog.show(this.doc, 'Threshold'); }
+
   // ===== File I/O =====
 
   /** Check if the Python server API is available (cached after first check) */
@@ -1138,11 +1354,28 @@ class App {
         alert('Error saving file: ' + e.message);
       }
     } else {
-      // Browser fallback
+      // Browser fallback — use File System Access API if available for real filename
       const blob = await new Promise(r => doc.composite.toBlob(r, 'image/png'));
-      const name = (doc.name || 'Untitled').replace(/\.(gbp)$/i, '').replace(/\.[^.]+$/, '') + '.png';
-      this._browserDownload(blob, name);
-      doc.name = name;
+      const suggestedName = (doc.name || 'Untitled').replace(/\.(gbp)$/i, '').replace(/\.[^.]+$/, '') + '.png';
+      if (window.showSaveFilePicker) {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName,
+            types: [{ description: 'PNG Image', accept: { 'image/png': ['.png'] } }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          doc.name = handle.name;
+          doc.dirty = false;
+          this.docManager.renderTabs();
+          return;
+        } catch (e) {
+          if (e.name === 'AbortError') return; // user cancelled
+        }
+      }
+      this._browserDownload(blob, suggestedName);
+      doc.name = suggestedName;
       doc.dirty = false;
       this.docManager.renderTabs();
     }
@@ -1212,9 +1445,26 @@ class App {
         layersFolder.file(l.file, b64, { base64: true });
       }
       const blob = await zip.generateAsync({ type: 'blob' });
-      const name = (doc.name || 'Untitled').replace(/\.(png|jpg|jpeg|bmp|gbp)$/i, '') + '.gbp';
-      this._browserDownload(blob, name);
-      doc.name = name;
+      const suggestedName = (doc.name || 'Untitled').replace(/\.(png|jpg|jpeg|bmp|gbp)$/i, '') + '.gbp';
+      if (window.showSaveFilePicker) {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName,
+            types: [{ description: 'GrobPaint Project', accept: { 'application/zip': ['.gbp'] } }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          doc.name = handle.name;
+          doc.dirty = false;
+          this.docManager.renderTabs();
+          return;
+        } catch (e) {
+          if (e.name === 'AbortError') return;
+        }
+      }
+      this._browserDownload(blob, suggestedName);
+      doc.name = suggestedName;
       doc.dirty = false;
       this.docManager.renderTabs();
     }

@@ -352,6 +352,28 @@
   </div>
 </div>
 
+<!-- Posterize Dialog -->
+<div id="posterize-overlay" class="hidden">
+  <div class="dialog">
+    <h3>Posterize</h3>
+    <div class="dialog-body">
+      <div class="dialog-row"><label>Levels:</label><input type="range" id="posterize-levels" min="2" max="32" value="4"><span id="posterize-levels-val" class="adj-val">4</span><button class="adj-reset" data-target="posterize-levels" data-default="4" title="Reset">&#x21ba;</button></div>
+    </div>
+    <div class="dialog-buttons"><button id="posterize-ok">OK</button><button id="posterize-cancel">Cancel</button></div>
+  </div>
+</div>
+
+<!-- Threshold Dialog -->
+<div id="threshold-overlay" class="hidden">
+  <div class="dialog">
+    <h3>Threshold</h3>
+    <div class="dialog-body">
+      <div class="dialog-row"><label>Level:</label><input type="range" id="threshold-level" min="1" max="254" value="128"><span id="threshold-level-val" class="adj-val">128</span><button class="adj-reset" data-target="threshold-level" data-default="128" title="Reset">&#x21ba;</button></div>
+    </div>
+    <div class="dialog-buttons"><button id="threshold-ok">OK</button><button id="threshold-cancel">Cancel</button></div>
+  </div>
+</div>
+
 <script type="module" src="js/core.js"></script>
 <script type="module" src="js/renderer.js"></script>
 <script type="module" src="js/tools.js"></script>

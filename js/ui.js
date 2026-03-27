@@ -375,14 +375,16 @@ export class LayersPanel {
         bus.emit('canvas:dirty');
       });
 
-      // Thumbnail
+      // Thumbnail — preserve aspect ratio
       const thumbWrap = document.createElement('div');
       thumbWrap.className = 'layer-thumb';
+      const lThumbH = 24;
+      const lThumbW = Math.max(8, Math.round(layer.canvas.width / layer.canvas.height * lThumbH));
       const thumbCanvas = document.createElement('canvas');
-      thumbCanvas.width = 32;
-      thumbCanvas.height = 24;
+      thumbCanvas.width = lThumbW;
+      thumbCanvas.height = lThumbH;
       const tctx = thumbCanvas.getContext('2d');
-      tctx.drawImage(layer.canvas, 0, 0, 32, 24);
+      tctx.drawImage(layer.canvas, 0, 0, lThumbW, lThumbH);
       thumbWrap.appendChild(thumbCanvas);
 
       // Name
@@ -439,9 +441,15 @@ export class LayersPanel {
       if (!layer) return;
       const canvas = item.querySelector('canvas');
       if (canvas) {
+        const lThumbH = 24;
+        const lThumbW = Math.max(8, Math.round(layer.canvas.width / layer.canvas.height * lThumbH));
+        if (canvas.width !== lThumbW || canvas.height !== lThumbH) {
+          canvas.width = lThumbW;
+          canvas.height = lThumbH;
+        }
         const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, 32, 24);
-        ctx.drawImage(layer.canvas, 0, 0, 32, 24);
+        ctx.clearRect(0, 0, lThumbW, lThumbH);
+        ctx.drawImage(layer.canvas, 0, 0, lThumbW, lThumbH);
       }
     });
   }
@@ -610,12 +618,14 @@ export class DocManager {
       tab.draggable = true;
       tab.dataset.index = i;
 
-      // Thumbnail
+      // Thumbnail — preserve aspect ratio
       doc.compositeAll();
+      const thumbH = 24;
+      const thumbW = Math.max(8, Math.round(doc.width / doc.height * thumbH));
       const thumb = document.createElement('canvas');
-      thumb.width = 32; thumb.height = 24;
+      thumb.width = thumbW; thumb.height = thumbH;
       const tctx = thumb.getContext('2d');
-      tctx.drawImage(doc.composite, 0, 0, 32, 24);
+      tctx.drawImage(doc.composite, 0, 0, thumbW, thumbH);
       tab.appendChild(thumb);
 
       // Name
@@ -990,10 +1000,18 @@ export class MenuBar {
         { sep: true },
         { label: 'Select All', shortcut: 'Ctrl+A', action: () => app.selectAll() },
         { label: 'Deselect', shortcut: 'Ctrl+D', action: () => app.deselect() },
+        { label: 'Invert Selection', action: () => app.invertSelection() },
+        { sep: true },
+        { label: 'Stroke Selection...', action: () => app.strokeSelection() },
       ];
       case 'adjustments': return [
         { label: 'Brightness/Contrast...', action: () => app.showBrightnessContrast() },
         { label: 'Hue/Saturation/Lightness...', action: () => app.showHSLAdjust() },
+        { sep: true },
+        { label: 'Invert Colors', action: () => app.invertColors() },
+        { label: 'Desaturate', action: () => app.desaturate() },
+        { label: 'Posterize...', action: () => app.showPosterize() },
+        { label: 'Threshold...', action: () => app.showThreshold() },
         { sep: true },
         { label: 'Gaussian Blur...', action: () => app.showGaussianBlur() },
         { label: 'Sharpen...', action: () => app.showSharpen() },
@@ -1001,6 +1019,10 @@ export class MenuBar {
       case 'image': return [
         { label: 'Flip Horizontal', action: () => app.flipHorizontal() },
         { label: 'Flip Vertical', action: () => app.flipVertical() },
+        { sep: true },
+        { label: 'Rotate 90° CW', action: () => bus.emit('rotate:cw') },
+        { label: 'Rotate 90° CCW', action: () => bus.emit('rotate:ccw') },
+        { label: 'Rotate 180°', action: () => bus.emit('rotate:180') },
         { sep: true },
         { label: 'Scale Image...', action: () => app.showScaleImageDialog() },
         { label: 'Canvas Size...', action: () => app.showCanvasSizeDialog() },
@@ -1547,6 +1569,68 @@ export class SharpenDialog extends AdjustmentDialog {
       data[pi]     = Math.max(0, Math.min(255, data[pi] + amount * (data[pi] - blurred[pi])));
       data[pi + 1] = Math.max(0, Math.min(255, data[pi + 1] + amount * (data[pi + 1] - blurred[pi + 1])));
       data[pi + 2] = Math.max(0, Math.min(255, data[pi + 2] + amount * (data[pi + 2] - blurred[pi + 2])));
+    }
+  }
+}
+
+// ===== Posterize =====
+
+export class PosterizeDialog extends AdjustmentDialog {
+  constructor() {
+    super('posterize-overlay', 'posterize-ok', 'posterize-cancel');
+    const slider = document.getElementById('posterize-levels');
+    const val = document.getElementById('posterize-levels-val');
+    slider.addEventListener('input', () => {
+      val.textContent = slider.value;
+      this._schedulePreview();
+    });
+  }
+
+  _resetSliders() {
+    document.getElementById('posterize-levels').value = 4;
+    document.getElementById('posterize-levels-val').textContent = '4';
+  }
+
+  _transformPixels(data, mask) {
+    const levels = parseInt(document.getElementById('posterize-levels').value);
+    if (levels < 2) return;
+    const step = 255 / (levels - 1);
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] === 0) continue;
+      if (mask && !mask[i / 4]) continue;
+      data[i]     = Math.round(Math.round(data[i] / step) * step);
+      data[i + 1] = Math.round(Math.round(data[i + 1] / step) * step);
+      data[i + 2] = Math.round(Math.round(data[i + 2] / step) * step);
+    }
+  }
+}
+
+// ===== Threshold =====
+
+export class ThresholdDialog extends AdjustmentDialog {
+  constructor() {
+    super('threshold-overlay', 'threshold-ok', 'threshold-cancel');
+    const slider = document.getElementById('threshold-level');
+    const val = document.getElementById('threshold-level-val');
+    slider.addEventListener('input', () => {
+      val.textContent = slider.value;
+      this._schedulePreview();
+    });
+  }
+
+  _resetSliders() {
+    document.getElementById('threshold-level').value = 128;
+    document.getElementById('threshold-level-val').textContent = '128';
+  }
+
+  _transformPixels(data, mask) {
+    const level = parseInt(document.getElementById('threshold-level').value);
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] === 0) continue;
+      if (mask && !mask[i / 4]) continue;
+      const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+      const val = gray >= level ? 255 : 0;
+      data[i] = val; data[i + 1] = val; data[i + 2] = val;
     }
   }
 }
