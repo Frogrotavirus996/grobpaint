@@ -1004,7 +1004,7 @@ export class MenuBar {
         { sep: true },
         { label: 'Scale Image...', action: () => app.showScaleImageDialog() },
         { label: 'Canvas Size...', action: () => app.showCanvasSizeDialog() },
-        { label: 'Crop to Selection', action: () => app.cropToSelection() },
+        { label: 'Crop to Selection', shortcut: 'Ctrl+Shift+X', action: () => app.cropToSelection() },
         { sep: true },
         { label: 'Flatten Image', action: () => app.flattenImage() },
       ];

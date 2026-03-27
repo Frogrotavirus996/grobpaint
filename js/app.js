@@ -344,7 +344,11 @@ class App {
             else this.undo();
             return;
           case 'c': e.preventDefault(); this.copySelection(); return;
-          case 'x': e.preventDefault(); this.cutSelection(); return;
+          case 'x':
+            e.preventDefault();
+            if (shift) this.cropToSelection();
+            else this.cutSelection();
+            return;
           case 'v': e.preventDefault(); this._pasteWithFallback(); return;
           case 'a': e.preventDefault(); this.selectAll(); return;
           case 'd': e.preventDefault(); this.deselect(); return;
